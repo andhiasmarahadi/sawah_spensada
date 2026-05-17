@@ -14,16 +14,16 @@
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- SweetAlert2 untuk Notifikasi Keren -->
+    <!-- SweetAlert2 -->
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
-    <!-- SheetJS (Excel Export/Import Asli) -->
+    <!-- SheetJS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-    <!-- Face-API.js (CDN) untuk struktur deteksi -->
+    <!-- Face-API.js -->
     <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 
-    <!-- Leaflet CSS & JS untuk Peta Interaktif -->
+    <!-- Leaflet CSS & JS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -33,7 +33,6 @@
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .sidebar-transition { transition: transform 0.3s ease-in-out; }
         
-        /* Animasi Scanner Wajah */
         .scan-line {
             width: 100%; height: 4px; background: rgba(59, 130, 246, 0.8);
             position: absolute; top: 0; left: 0;
@@ -44,10 +43,7 @@
             0% { top: 0; } 50% { top: 100%; } 100% { top: 0; }
         }
         
-        /* Leaflet map fix inside flex container */
         #map-picker { z-index: 1; }
-        
-        /* Custom scrollbar for tables */
         .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scroll::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -73,44 +69,43 @@
     const IS_PREVIEW = false; // Mode Live Server!
     
     // WAJIB ISI DENGAN URL DEPLOYMENT GAS ANDA
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbwi1x4x-2AZs-AthcXJREMm035C-QFl84PmemK7xaRFnFqVX2dxuOKquO2WsvmLUJNz/exec"; 
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbxR1hmdckofCP_ljJrqSFqei6BhyU4qf0vctyAr_wX5GDjwRYifhdIiHQ5YS5I2IfzY/exec"; 
     const APP_LOGO = "https://i.imghippo.com/files/Qvgj6380ctk.png";
+
+    // Notifikasi Super Cepat (Tanpa Blokir Layar)
+    const Toast = Swal.mixin({
+        toast: true, position: 'top-end', showConfirmButton: false,
+        timer: 3000, timerProgressBar: true
+    });
 
     // Data Penampung 
     let dummyUsers = [];
     let dummyAbsensi = [];
     let dummyLokasi = [];
     let dummyIzin = [];
-    let dummyPengaturan = {
-        scan_in_start: '06:00', scan_in_end: '07:15',
-        scan_out_start: '14:00', scan_out_end: '16:00'
-    };
+    let dummyPengaturan = { scan_in_start: '06:00', scan_in_end: '07:15', scan_out_start: '14:00', scan_out_end: '16:00' };
 
-    // Fungsi Sinkronisasi Data Master dari Google Sheets
-    async function syncDataFromServer() {
-        try {
-            const response = await fetch(GAS_URL, {
-                method: 'POST', body: JSON.stringify({ action: 'getData' })
-            });
-            const res = await response.json();
-            if(res.success) {
-                dummyUsers = res.data.users || [];
-                dummyAbsensi = res.data.absensi || [];
-                dummyLokasi = res.data.lokasi || [];
-                if(dummyLokasi.length === 0) dummyLokasi = [{ id: 'l1', nama: 'Gerbang Utama SMPN 1', lat: -8.5361, lon: 115.4215, radius: 100 }];
-            }
-        } catch (error) { console.error("Gagal menarik data dari server", error); }
-    }
-
-    // --- FUNGSI AKSI GLOBAL ---
+    // --- FUNGSI AKSI GLOBAL (Speed Optimized) ---
     window.deleteAllData = function(type) {
         Swal.fire({
-            title: 'Hapus Semua Data?',
-            text: `Anda yakin ingin mengosongkan seluruh data ${type}?`,
+            title: `Kosongkan Data ${type}?`,
+            text: `Data yang dihapus dari Database permanen dan tidak bisa dikembalikan!`,
             icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', cancelButtonColor: '#94a3b8', confirmButtonText: 'Ya, Kosongkan!'
         }).then((result) => {
             if (result.isConfirmed) {
-                Swal.fire('Fitur Terkunci', 'Untuk menghapus massal, silakan hapus langsung dari Google Sheets demi keamanan data.', 'info');
+                // Fetch tanpa pop up loading
+                fetch(GAS_URL, {
+                    method: 'POST', body: JSON.stringify({ action: 'deleteAllData', type: type })
+                }).then(r => r.json()).then(res => {
+                    if(res.success) {
+                        if(type === 'anggota') dummyUsers = dummyUsers.filter(u => u.role !== 'Siswa');
+                        else if(type === 'absensi') dummyAbsensi = [];
+                        else if(type === 'lokasi') dummyLokasi = [];
+                        
+                        Toast.fire({ icon: 'success', title: 'Data berhasil dikosongkan!' });
+                        changeView(type === 'anggota' ? 'admin-users' : (type === 'absensi' ? 'admin-absensi' : 'admin-lokasi'));
+                    } else Swal.fire('Gagal', res.message, 'error');
+                });
             }
         });
     };
@@ -125,10 +120,10 @@
                      if(response.success) {
                          if(type==='user') dummyUsers = dummyUsers.filter(u => u.id !== id);
                          else if(type==='lokasi') dummyLokasi = dummyLokasi.filter(l => l.id !== id);
-                         Swal.fire('Terhapus', 'Item berhasil dihapus dari Database.', 'success');
+                         Toast.fire({ icon: 'success', title: 'Item berhasil dihapus.' });
                          changeView('admin-' + (type==='user'?'users':'lokasi'));
                      } else { Swal.fire('Gagal', response.message, 'error'); }
-                 }).catch(e => Swal.fire('Error', 'Gagal koneksi server', 'error'));
+                 });
              }
          });
     };
@@ -136,7 +131,7 @@
     window.updateIzin = function(id, status) {
         let item = dummyIzin.find(i => i.id === id);
         if(item) item.status = status;
-        Swal.fire('Berhasil', `Status Keterangan diubah menjadi: ${status}`, 'success');
+        Toast.fire({ icon: 'success', title: `Status diubah: ${status}` });
         changeView(currentUser.role === 'Admin' ? 'admin-izin' : 'wali-izin');
     };
 
@@ -156,40 +151,24 @@
             let text = row.innerText.toLowerCase();
             let rowKelas = row.children[2].innerText;
             let rowTanggal = row.children[3].innerText;
-            
-            let matchKeyword = text.includes(keyword);
-            let matchKelas = kelas === "" || rowKelas === kelas;
-            let matchTanggal = tanggal === "" || rowTanggal === tanggal;
-            
-            row.style.display = (matchKeyword && matchKelas && matchTanggal) ? '' : 'none';
+            row.style.display = (text.includes(keyword) && (kelas === "" || rowKelas === kelas) && (tanggal === "" || rowTanggal === tanggal)) ? '' : 'none';
         });
     };
 
     window.filterUsers = function() {
         let keyword = document.getElementById('search-users') ? document.getElementById('search-users').value.toLowerCase() : '';
         let kelas = document.getElementById('filter-kelas-user') ? document.getElementById('filter-kelas-user').value : '';
-        
         let rows = document.querySelectorAll(`#table-users tbody tr`);
         rows.forEach(row => {
             if(row.children.length === 1) return; 
             let text = row.innerText.toLowerCase();
             let rowKelas = row.children[4] ? row.children[4].innerText : ''; 
-            
-            let matchKeyword = text.includes(keyword);
-            let matchKelas = kelas === "" || rowKelas === kelas;
-            
-            row.style.display = (matchKeyword && matchKelas) ? '' : 'none';
+            row.style.display = (text.includes(keyword) && (kelas === "" || rowKelas === kelas)) ? '' : 'none';
         });
     };
 
-    // --- FUNGSI LULUS DAN NAIK KELAS ---
-    window.luluskanSiswa = function() {
-        Swal.fire('Fitur Live', 'Untuk proses lulus/naik kelas massal, disarankan menggunakan fitur Sort/Filter langsung di Google Sheets Anda agar lebih aman.', 'info');
-    };
-
-    window.naikkanSiswa = function() {
-        Swal.fire('Fitur Live', 'Untuk proses lulus/naik kelas massal, disarankan menggunakan fitur Sort/Filter langsung di Google Sheets Anda agar lebih aman.', 'info');
-    };
+    window.luluskanSiswa = function() { Swal.fire('Fitur Live', 'Gunakan Sort/Filter langsung di Google Sheets untuk menghapus lulusan secara massal dan aman.', 'info'); };
+    window.naikkanSiswa = function() { Swal.fire('Fitur Live', 'Gunakan Sort/Filter langsung di Google Sheets untuk proses kenaikan kelas yang aman.', 'info'); };
 
     // --- MODAL MANAJEMEN ANGGOTA ---
     window.showAddUserModal = function() {
@@ -197,7 +176,7 @@
             title: '<div class="flex flex-col items-center"><div class="w-14 h-14 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-2 shadow-inner"><i class="fas fa-user-plus text-2xl"></i></div><span class="text-xl font-bold text-slate-800">Tambah Anggota</span></div>',
             html: `
                 <div class="text-left px-2 mt-4">
-                    <p class="text-xs text-slate-500 mb-4 text-center leading-relaxed">Password default untuk akun baru adalah <b>123456</b>.</p>
+                    <p class="text-xs text-slate-500 mb-4 text-center">Password default untuk akun baru adalah <b>123456</b>.</p>
                     <div class="mb-3">
                         <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-user-circle text-blue-500 mr-1"></i> Nama Lengkap</label>
                         <input id="swal-nama" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50" placeholder="Contoh: Budi Santoso" required>
@@ -209,45 +188,31 @@
                     <div class="grid grid-cols-2 gap-3 mb-1">
                         <div>
                             <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-user-shield text-purple-500 mr-1"></i> Akses</label>
-                            <select id="swal-role" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50">
-                                <option value="Siswa">Siswa</option>
-                                <option value="Wali">Wali Kelas</option>
-                                <option value="Admin">Admin</option>
-                            </select>
+                            <select id="swal-role" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50"><option value="Siswa">Siswa</option><option value="Wali">Wali Kelas</option><option value="Admin">Admin</option></select>
                         </div>
                         <div>
                             <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-chalkboard text-amber-500 mr-1"></i> Kelas</label>
-                            <select id="swal-kelas" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50">
-                                <option value="-">Kosongkan</option>
-                                <optgroup label="Kelas 7"><option value="7A">7A</option><option value="7B">7B</option><option value="7C">7C</option><option value="7D">7D</option><option value="7E">7E</option><option value="7F">7F</option><option value="7G">7G</option></optgroup>
-                                <optgroup label="Kelas 8"><option value="8A">8A</option><option value="8B">8B</option><option value="8C">8C</option><option value="8D">8D</option><option value="8E">8E</option><option value="8F">8F</option><option value="8G">8G</option></optgroup>
-                                <optgroup label="Kelas 9"><option value="9A">9A</option><option value="9B">9B</option><option value="9C">9C</option><option value="9D">9D</option><option value="9E">9E</option><option value="9F">9F</option><option value="9G">9G</option></optgroup>
-                            </select>
+                            <select id="swal-kelas" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50"><option value="-">Kosongkan</option><optgroup label="Kelas 7"><option value="7A">7A</option><option value="7B">7B</option><option value="7C">7C</option></optgroup><optgroup label="Kelas 8"><option value="8A">8A</option><option value="8B">8B</option></optgroup><optgroup label="Kelas 9"><option value="9A">9A</option><option value="9B">9B</option></optgroup></select>
                         </div>
                     </div>
                 </div>
             `,
             focusConfirm: false, showCancelButton: true, confirmButtonText: '<i class="fas fa-save mr-1"></i> Simpan Data', cancelButtonText: 'Batal',
-            confirmButtonColor: '#2563eb', cancelButtonColor: '#94a3b8', customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl', cancelButton: 'rounded-xl' },
-            preConfirm: () => {
-                return {
-                    nama: document.getElementById('swal-nama').value, nisn: document.getElementById('swal-nisn').value,
-                    role: document.getElementById('swal-role').value, kelas: document.getElementById('swal-kelas').value
-                }
-            }
+            confirmButtonColor: '#2563eb', customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl', cancelButton: 'rounded-xl' },
+            preConfirm: () => { return { nama: document.getElementById('swal-nama').value, nisn: document.getElementById('swal-nisn').value, role: document.getElementById('swal-role').value, kelas: document.getElementById('swal-kelas').value } }
         }).then((result) => {
             if (result.isConfirmed) {
                 let v = result.value;
                 if(!v.nama) return Swal.fire('Gagal', 'Nama wajib diisi!', 'error');
                 
-                fetch(GAS_URL, {
-                    method: 'POST', body: JSON.stringify({ action: 'addUser', data: v })
-                }).then(r => r.json()).then(res => {
+                // Fetch cepat di background, update UI instan
+                fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ action: 'addUser', data: v }) })
+                .then(r => r.json()).then(res => {
                     if(res.success) {
-                        syncDataFromServer().then(() => {
-                            Swal.fire({icon: 'success', title: 'Tersimpan', text: 'Anggota berhasil ditambahkan ke Database.', timer: 1500, showConfirmButton: false});
-                            changeView('admin-users'); 
-                        });
+                        v.id = res.newId; v.username = v.nisn; v.password = '123456';
+                        dummyUsers.unshift(v); // Update lokal tanpa reload database full
+                        Toast.fire({ icon: 'success', title: 'Anggota tersimpan di Database.' });
+                        changeView('admin-users'); 
                     } else Swal.fire('Gagal', res.message, 'error');
                 });
             }
@@ -262,57 +227,31 @@
         if (user.role === 'Wali' || user.role === 'Siswa') {
             const klsList = ['7A','7B','7C','7D','7E','7F','7G', '8A','8B','8C','8D','8E','8F','8G', '9A','9B','9C','9D','9E','9F','9G'];
             let options = klsList.map(c => `<option value="${c}" ${user.kelas === c ? 'selected' : ''}>${c}</option>`).join('');
-            kelasHtml = `
-                <div class="mb-3 text-left">
-                    <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-chalkboard text-amber-500 mr-1"></i> Kelas ${user.role === 'Wali' ? '(Yang Diampu)' : ''}</label>
-                    <select id="swal-edit-kelas" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50">
-                        <option value="-" ${user.kelas === '-' ? 'selected' : ''}>- Pilih Kelas -</option>${options}
-                    </select>
-                </div>
-            `;
-        } else {
-            kelasHtml = `<input type="hidden" id="swal-edit-kelas" value="${user.kelas}">`;
-        }
+            kelasHtml = `<div class="mb-3 text-left"><label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-chalkboard text-amber-500 mr-1"></i> Kelas ${user.role === 'Wali' ? '(Yang Diampu)' : ''}</label><select id="swal-edit-kelas" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50"><option value="-" ${user.kelas === '-' ? 'selected' : ''}>- Pilih Kelas -</option>${options}</select></div>`;
+        } else { kelasHtml = `<input type="hidden" id="swal-edit-kelas" value="${user.kelas}">`; }
         
         Swal.fire({
             title: '<div class="text-xl font-bold text-slate-800">Edit Data Anggota</div>',
             html: `
                 <div class="px-2 mt-4 text-left">
-                    <div class="mb-3 text-left">
-                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-user-circle text-blue-500 mr-1"></i> Nama Lengkap</label>
-                        <input id="swal-edit-nama" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50" value="${user.nama}">
-                    </div>
-                    <div class="mb-3 text-left">
-                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-id-card text-emerald-500 mr-1"></i> NISN / NIP</label>
-                        <input id="swal-edit-nisn" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50" value="${user.nisn}">
-                    </div>
-                    <div class="mb-3 text-left">
-                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-key text-rose-500 mr-1"></i> Password</label>
-                        <input id="swal-edit-pass" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50" value="${user.password}">
-                    </div>
+                    <div class="mb-3 text-left"><label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Nama Lengkap</label><input id="swal-edit-nama" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50" value="${user.nama}"></div>
+                    <div class="mb-3 text-left"><label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">NISN / NIP</label><input id="swal-edit-nisn" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50" value="${user.nisn}"></div>
+                    <div class="mb-3 text-left"><label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Password</label><input id="swal-edit-pass" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50" value="${user.password}"></div>
                     ${kelasHtml}
-                </div>
-            `,
+                </div>`,
             focusConfirm: false, showCancelButton: true, confirmButtonText: '<i class="fas fa-save mr-1"></i> Update Data', cancelButtonText: 'Batal',
-            confirmButtonColor: '#2563eb', cancelButtonColor: '#94a3b8', customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl', cancelButton: 'rounded-xl' },
-            preConfirm: () => {
-                return {
-                    id: user.id, nama: document.getElementById('swal-edit-nama').value,
-                    nisn: document.getElementById('swal-edit-nisn').value, kelas: document.getElementById('swal-edit-kelas').value,
-                    password: document.getElementById('swal-edit-pass').value
-                }
-            }
+            confirmButtonColor: '#2563eb', customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl', cancelButton: 'rounded-xl' },
+            preConfirm: () => { return { id: user.id, nama: document.getElementById('swal-edit-nama').value, nisn: document.getElementById('swal-edit-nisn').value, kelas: document.getElementById('swal-edit-kelas').value, password: document.getElementById('swal-edit-pass').value } }
         }).then((result) => {
             if(result.isConfirmed) {
-                fetch(GAS_URL, {
-                    method: 'POST', body: JSON.stringify({ action: 'updateUser', data: result.value })
-                }).then(r => r.json()).then(res => {
+                fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ action: 'updateUser', data: result.value }) })
+                .then(r => r.json()).then(res => {
                     if(res.success) {
-                        syncDataFromServer().then(() => {
-                            if(currentUser && currentUser.id === result.value.id) { currentUser.password = result.value.password; currentUser.nama = result.value.nama; }
-                            Swal.fire({icon: 'success', title: 'Terupdate', text: 'Perubahan tersimpan di Sheets.', timer: 1500, showConfirmButton: false});
-                            changeView('admin-users');
-                        });
+                        // Optimistic Local Update
+                        user.nama = result.value.nama; user.nisn = result.value.nisn; user.username = result.value.nisn; user.kelas = result.value.kelas; user.password = result.value.password;
+                        if(currentUser && currentUser.id === result.value.id) { currentUser.password = result.value.password; currentUser.nama = result.value.nama; }
+                        Toast.fire({ icon: 'success', title: 'Perubahan tersimpan.' });
+                        changeView('admin-users');
                     } else Swal.fire('Gagal', res.message, 'error');
                 });
             }
@@ -320,17 +259,9 @@
     };
 
     window.downloadTemplate = function() {
-        const ws_data = [
-            ["NISN", "Nama Siswa", "Kelas", "No Absen", "Tahun Pelajaran"],
-            ["0012345678", "Siswa Teladan Satu", "7A", "1", "2026/2027"],
-            ["0087654321", "Siswa Teladan Dua", "8B", "2", "2026/2027"],
-            ["0011223344", "Siswa Teladan Tiga", "9C", "3", "2026/2027"]
-        ];
-        const ws = XLSX.utils.aoa_to_sheet(ws_data);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Template_Data");
+        const ws_data = [ ["NISN", "Nama Siswa", "Kelas", "No Absen", "Tahun Pelajaran"], ["0012345678", "Siswa Teladan Satu", "7A", "1", "2026/2027"], ["0087654321", "Siswa Teladan Dua", "8B", "2", "2026/2027"] ];
+        const ws = XLSX.utils.aoa_to_sheet(ws_data); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Template_Data");
         XLSX.writeFile(wb, "Template_Data_Anggota_SAWAH.xlsx");
-        Swal.fire({ icon: 'success', title: 'Berhasil!', html: '<p class="text-sm text-slate-600">Template <b>Excel (.xlsx)</b> berhasil diunduh.</p>', confirmButtonColor: '#10b981' });
     };
 
     window.showImportModal = function() {
@@ -344,20 +275,17 @@
                         <input type="file" accept=".xlsx, .xls" id="file-import" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer z-10" 
                             onchange="let fn = this.files[0] ? this.files[0].name : 'Maksimal ukuran file: 5MB'; let el = document.getElementById('file-name-display'); el.innerText = fn; el.classList.add('text-emerald-600', 'font-bold'); el.classList.remove('text-slate-400');">
                         <i class="fas fa-cloud-upload-alt text-4xl text-slate-300 group-hover:text-emerald-500 group-hover:-translate-y-1 transform transition duration-300 mb-3"></i>
-                        <h4 class="text-sm font-bold text-slate-700 group-hover:text-emerald-600 transition">Ketuk untuk Memilih File</h4>
-                        <p class="text-[11px] text-slate-400 mt-1" id="file-name-display">Maksimal ukuran file: 5MB</p>
+                        <h4 class="text-sm font-bold text-slate-700 group-hover:text-emerald-600 transition">Pilih File</h4>
+                        <p class="text-[11px] text-slate-400 mt-1" id="file-name-display">Maksimal 5MB</p>
                     </div>
                 </div>
             `,
-            showCancelButton: true, confirmButtonText: '<i class="fas fa-upload mr-1"></i> Proses Import', cancelButtonText: 'Batal', confirmButtonColor: '#10b981',
-            preConfirm: () => {
-                const fileInput = document.getElementById('file-import');
-                if (!fileInput.files.length) { Swal.showValidationMessage('Pilih file Excel terlebih dahulu!'); return false; }
-                return fileInput.files[0];
-            }
+            showCancelButton: true, confirmButtonText: '<i class="fas fa-upload mr-1"></i> Import Data', cancelButtonText: 'Batal', confirmButtonColor: '#10b981',
+            preConfirm: () => { const fileInput = document.getElementById('file-import'); if (!fileInput.files.length) { Swal.showValidationMessage('Pilih file Excel!'); return false; } return fileInput.files[0]; }
         }).then((res) => {
             if(res.isConfirmed && res.value) {
                 const reader = new FileReader();
+                Swal.fire({ title: 'Membaca File...', didOpen: () => { Swal.showLoading(); } });
                 reader.onload = function(e) {
                     try {
                         const data = new Uint8Array(e.target.result);
@@ -366,28 +294,24 @@
                         
                         // Perbaikan Bug Excel: raw false agar 0 didepan NISN tidak hilang
                         const json = XLSX.utils.sheet_to_json(worksheet, {raw: false});
-                        
                         if(json.length === 0) return Swal.fire('Gagal', 'File Excel kosong.', 'error');
 
                         let newUsers = [];
                         json.forEach((row) => {
                             if(row['Nama Siswa'] && row['NISN']) {
-                                newUsers.push({
-                                    username: String(row['NISN']).trim(), password: '123456', role: 'Siswa',
-                                    nama: row['Nama Siswa'], kelas: row['Kelas'] || '-', nisn: String(row['NISN']).trim()
-                                });
+                                newUsers.push({ username: String(row['NISN']).trim(), password: '123456', role: 'Siswa', nama: row['Nama Siswa'], kelas: row['Kelas'] || '-', nisn: String(row['NISN']).trim() });
                             }
                         });
                         
                         if(newUsers.length > 0) {
-                            fetch(GAS_URL, {
-                                method: 'POST', body: JSON.stringify({ action: 'importUsers', users: newUsers })
-                            }).then(r => r.json()).then(resp => {
+                            Swal.fire({ title: 'Menyimpan ke Server...', text: 'Memasukkan data ke database', didOpen: () => Swal.showLoading() });
+                            fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ action: 'importUsers', users: newUsers }) })
+                            .then(r => r.json()).then(resp => {
                                 if(resp.success) {
-                                    syncDataFromServer().then(() => {
-                                        Swal.fire({ icon: 'success', title: 'Berhasil!', text: `${newUsers.length} siswa diimport ke Sheets.`, timer: 2000, showConfirmButton: false });
-                                        changeView('admin-users'); 
-                                    });
+                                    // Inject Array Lokal
+                                    resp.imported.forEach(u => dummyUsers.unshift({ id: u[0], username: u[1], password: u[2], role: u[3], nama: u[4], kelas: u[5], nisn: u[6] }));
+                                    Swal.fire({ icon: 'success', title: 'Berhasil!', text: `${newUsers.length} siswa diimport.`, timer: 2000, showConfirmButton: false });
+                                    changeView('admin-users'); 
                                 } else Swal.fire('Gagal', resp.message, 'error');
                             });
                         } else { Swal.fire('Gagal', 'Data tidak valid.', 'error'); }
@@ -403,16 +327,17 @@
         let lat = document.getElementById('lat').value; let lon = document.getElementById('lon').value; let radius = document.getElementById('radius').value;
         if(!nama || !lat || !lon) return Swal.fire('Error', 'Lengkapi data koordinat.', 'error');
         
-        fetch(GAS_URL, {
-            method: 'POST', body: JSON.stringify({ action: 'addLokasi', data: { nama: nama, lat: lat, lon: lon, radius: radius } })
-        }).then(r => r.json()).then(res => {
+        const btn = document.getElementById('btn-simpan-lokasi'); const oText = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Menyimpan...'; btn.disabled = true;
+
+        fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ action: 'addLokasi', data: { nama: nama, lat: lat, lon: lon, radius: radius } }) })
+        .then(r => r.json()).then(res => {
             if(res.success) {
-                syncDataFromServer().then(() => {
-                    Swal.fire('Tersimpan', 'Titik lokasi baru ditambahkan ke Server.', 'success');
-                    changeView('admin-lokasi');
-                });
+                dummyLokasi.push({ id: res.newId, nama: nama, lat: parseFloat(lat), lon: parseFloat(lon), radius: parseInt(radius) });
+                Toast.fire({ icon: 'success', title: 'Titik lokasi baru ditambahkan.' });
+                changeView('admin-lokasi');
             } else Swal.fire('Gagal', res.message, 'error');
-        });
+        }).finally(() => { btn.innerHTML = oText; btn.disabled = false; });
     };
 
     window.simpanProfil = function() {
@@ -430,46 +355,44 @@
             let file = elFoto.files[0];
             let reader = new FileReader();
             reader.onload = function(e) {
-                pData.foto = e.target.result; // Convert ke Base64
-                sendUpdateServer(pData);
+                pData.foto = e.target.result; // Base64
+                sendUpdateServer(pData, true);
             };
             reader.readAsDataURL(file);
         } else {
-            if (hasChanges) sendUpdateServer(pData);
-            else Swal.fire('Info', 'Tidak ada perubahan data.', 'info');
+            if (hasChanges) sendUpdateServer(pData, false);
+            else Toast.fire({ icon: 'info', title: 'Tidak ada perubahan data.' });
         }
 
-        function sendUpdateServer(dataToSend) {
-            fetch(GAS_URL, {
-                method: 'POST', body: JSON.stringify({ action: 'updateUser', data: dataToSend })
-            }).then(r => r.json()).then(res => {
+        function sendUpdateServer(dataToSend, hasFoto) {
+            const btn = document.getElementById('btn-simpan-profil'); const oText = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Menyimpan...'; btn.disabled = true;
+
+            fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ action: 'updateUser', data: dataToSend }) })
+            .then(r => r.json()).then(res => {
                 if(res.success) {
                     currentUser.password = dataToSend.password; currentUser.nama = dataToSend.nama;
-                    if(dataToSend.foto) currentUser.foto = dataToSend.foto; // set current foto
+                    if(hasFoto) currentUser.foto = dataToSend.foto;
                     
-                    Swal.fire({ icon: 'success', title: 'Tersimpan', text: 'Perubahan Profil tersimpan di Database.', timer: 2000, showConfirmButton: false });
+                    Toast.fire({ icon: 'success', title: 'Profil Diperbarui.' });
                     document.getElementById('header-name').innerText = currentUser.nama;
-                    if(dataToSend.foto) {
+                    if(hasFoto) {
                         const avatarBox = document.querySelector('header .rounded-full.overflow-hidden');
                         if(avatarBox) avatarBox.innerHTML = `<img src="${dataToSend.foto}" class="w-full h-full object-cover">`;
                     }
-                    setTimeout(() => { changeView('profil'); }, 500);
+                    setTimeout(() => { changeView('profil'); }, 300);
                 } else Swal.fire('Gagal', res.message, 'error');
-            }).catch(e => Swal.fire('Error', 'Gagal koneksi ke server', 'error'));
+            }).finally(() => { btn.innerHTML = oText; btn.disabled = false; });
         }
     };
 
     let currentUser = null; let stream = null; let mapInstance = null; let mapMarker = null; let activeInterval = null;
-
     window.onload = () => { renderApp(); };
 
     function renderApp() {
         const root = document.createElement('div');
         root.id = 'app-root'; root.className = 'w-full h-screen';
-        
-        if (!currentUser) root.appendChild(createLoginView());
-        else root.appendChild(createDashboardView());
-
+        if (!currentUser) root.appendChild(createLoginView()); else root.appendChild(createDashboardView());
         document.body.innerHTML = ''; document.body.appendChild(root);
     }
 
@@ -496,23 +419,19 @@
             <form id="loginForm" class="space-y-6">
                 <div>
                     <label class="block text-sm font-semibold text-gray-700 mb-1">Username / NISN / NIP</label>
-                    <div class="relative rounded-lg shadow-sm">
-                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><i class="fas fa-user text-blue-500"></i></div>
+                    <div class="relative rounded-lg shadow-sm"><div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><i class="fas fa-user text-blue-500"></i></div>
                         <input type="text" id="username" required placeholder="Masukkan identitas..." class="focus:ring-2 focus:ring-blue-500 block w-full pl-11 pr-4 py-3 sm:text-sm border-gray-300 rounded-lg bg-gray-50 border outline-none">
                     </div>
                 </div>
                 <div>
                     <label class="block text-sm font-semibold text-gray-700 mb-1">Password</label>
-                    <div class="relative rounded-lg shadow-sm">
-                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><i class="fas fa-lock text-blue-500"></i></div>
+                    <div class="relative rounded-lg shadow-sm"><div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><i class="fas fa-lock text-blue-500"></i></div>
                         <input type="password" id="password" required placeholder="Masukkan password..." class="focus:ring-2 focus:ring-blue-500 block w-full pl-11 pr-4 py-3 sm:text-sm border-gray-300 rounded-lg bg-gray-50 border outline-none">
                     </div>
                 </div>
                 <button type="submit" id="btn-login" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-md text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all transform active:scale-95">MASUK SISTEM <i class="fas fa-arrow-right ml-2 mt-1"></i></button>
             </form>
-            <div class="mt-10 text-center">
-                <p class="text-xs font-semibold text-gray-400 tracking-wider">Andhi Asmara Hadi &copy; 2026</p>
-            </div>
+            <div class="mt-10 text-center"><p class="text-xs font-semibold text-gray-400 tracking-wider">Andhi Asmara Hadi &copy; 2026</p></div>
         `;
         formBox.querySelector('form').addEventListener('submit', handleLogin);
         rightPanel.appendChild(formBox); container.appendChild(leftPanel); container.appendChild(rightPanel);
@@ -525,21 +444,23 @@
         const passVal = document.getElementById('password').value;
         const btnLogin = document.getElementById('btn-login');
         
-        // Ubah text tombol agar interaktif (tanpa sweetalert)
+        // Animasi loading di tombol, hilangkan popup Swal
         const originalText = btnLogin.innerHTML;
-        btnLogin.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Memproses...';
+        btnLogin.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Mengautentikasi...';
         btnLogin.disabled = true;
 
         fetch(GAS_URL, {
-            method: 'POST',
-            body: JSON.stringify({ action: 'login', username: userVal, password: passVal })
-        })
-        .then(res => res.json())
-        .then(async data => {
+            method: 'POST', body: JSON.stringify({ action: 'login', username: userVal, password: passVal })
+        }).then(res => res.json()).then(data => {
             if(data.success) { 
+                // Karena data master sudah ikut terkirim di dalam payload login, langsung set variabel!
                 currentUser = data.user; 
-                await syncDataFromServer(); 
-                Swal.fire({ icon: 'success', title: 'Login Berhasil', timer: 1500, showConfirmButton: false });
+                dummyUsers = data.appData.users || [];
+                dummyAbsensi = data.appData.absensi || [];
+                dummyLokasi = data.appData.lokasi || [];
+                if(dummyLokasi.length === 0) dummyLokasi = [{ id: 'l1', nama: 'Gerbang Utama SMPN 1', lat: -8.5361, lon: 115.4215, radius: 100 }];
+                
+                Toast.fire({ icon: 'success', title: 'Akses Diterima!' });
                 renderApp(); 
             } else { 
                 Swal.fire('Gagal', data.message, 'error'); 
@@ -861,7 +782,7 @@
                     <h3 class="text-2xl font-black text-slate-800">${currentUser.nama}</h3>
                     <p class="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full mt-2 border border-blue-100">${currentUser.role}</p>
                 </div>
-                <form onsubmit="event.preventDefault(); simpanProfil();">${fieldsHtml}<button type="submit" class="w-full mt-4 bg-slate-800 hover:bg-slate-900 text-white font-bold py-3.5 rounded-xl shadow-md transition transform active:scale-95 text-sm uppercase"><i class="fas fa-check-circle mr-2"></i> Terapkan Perubahan</button></form>
+                <form onsubmit="event.preventDefault(); simpanProfil();">${fieldsHtml}<button type="submit" id="btn-simpan-profil" class="w-full mt-4 bg-slate-800 hover:bg-slate-900 text-white font-bold py-3.5 rounded-xl shadow-md transition transform active:scale-95 text-sm uppercase"><i class="fas fa-check-circle mr-2"></i> Terapkan Perubahan</button></form>
             </div>`;
     }
 
@@ -925,7 +846,7 @@
                             <div><label class="block text-xs font-bold text-slate-600 mb-1">Lon</label><input type="text" id="lon" required readonly class="w-full bg-slate-50 border-slate-300 border rounded-lg p-2.5 text-sm font-mono text-slate-500 outline-none"></div>
                         </div>
                         <div><label class="block text-xs font-bold text-slate-600 mb-1">Toleransi Jarak (Meter)</label><input type="number" id="radius" value="50" min="10" required class="w-full border-slate-300 border rounded-lg p-2.5 text-sm outline-none shadow-sm"></div>
-                        <button type="submit" class="w-full bg-blue-600 text-white px-4 py-3 rounded-xl shadow-md font-bold text-sm hover:bg-blue-700 transition active:scale-95"><i class="fas fa-save mr-1"></i> SIMPAN LOKASI</button>
+                        <button type="submit" id="btn-simpan-lokasi" class="w-full bg-blue-600 text-white px-4 py-3 rounded-xl shadow-md font-bold text-sm hover:bg-blue-700 transition active:scale-95"><i class="fas fa-save mr-1"></i> SIMPAN LOKASI</button>
                     </form>
                 </div>
                 <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col h-full">
@@ -935,7 +856,7 @@
                     <div class="space-y-3 overflow-y-auto max-h-[500px] pr-2 flex-1 custom-scroll">
                         ${dummyLokasi.map(l => `
                             <div class="border border-slate-200 rounded-xl p-4 bg-slate-50 hover:bg-blue-50 transition border-l-4 border-l-blue-500 shadow-sm relative group">
-                                <h4 class="font-bold text-slate-800 text-lg">${l.nama}</h4>
+                                <h4 class="font-bold text-slate-800 text-lg">${l.nama || l.nama_lokasi}</h4>
                                 <div class="mt-2 space-y-1"><p class="text-xs font-mono text-slate-600 bg-white inline-block px-2 py-1 rounded border shadow-sm"><i class="fas fa-map-marker-alt text-rose-500 mr-1"></i> ${l.lat}, ${l.lon}</p><p class="text-xs font-bold text-blue-600 bg-white inline-block px-2 py-1 rounded border shadow-sm"><i class="fas fa-bullseye mr-1"></i> Radius: ${l.radius}m</p></div>
                                 <button onclick="deleteSingle('${l.id}', 'lokasi')" class="absolute top-4 right-4 text-slate-400 hover:text-rose-500 hover:bg-rose-50 p-2 rounded-lg transition" title="Hapus Lokasi"><i class="fas fa-trash-alt"></i></button>
                             </div>`).join('')}
@@ -1062,7 +983,6 @@
             (pos) => {
                 const distance = dummyLokasi.length > 0 ? calculateDistance(pos.coords.latitude, pos.coords.longitude, dummyLokasi[0].lat, dummyLokasi[0].lon) : 0;
                 
-                // Tempelkan kordinat ke input yang disembunyikan agar bisa ditarik
                 const tmpLat = document.createElement('input'); tmpLat.type = 'hidden'; tmpLat.id = 'scan-lat'; tmpLat.value = pos.coords.latitude;
                 const tmpLon = document.createElement('input'); tmpLon.type = 'hidden'; tmpLon.id = 'scan-lon'; tmpLon.value = pos.coords.longitude;
                 document.body.appendChild(tmpLat); document.body.appendChild(tmpLon);
@@ -1123,13 +1043,17 @@
 
         fetch(GAS_URL, {
             method: 'POST', body: JSON.stringify({ action: 'scan', type: type, id_user: currentUser.id, image: base64Image, lat: posLat, lon: posLon })
-        }).then(res => res.json()).then(data => { 
-            if(data.success) {
-                syncDataFromServer().then(() => {
-                    Swal.fire({ icon: 'success', title: `Scan ${type} Berhasil!`, html: `<p class="text-slate-600 font-medium">Tercatat di Server</p><img src="${base64Image}" class="mt-4 rounded-xl mx-auto w-48 border-4 border-emerald-100 shadow-md">`, confirmButtonColor: '#10b981' });
-                });
-            } else Swal.fire('Ditolak', data.message, 'error'); 
-        }).catch(err => Swal.fire('Error', 'Gagal koneksi database.', 'error'));
+        }).then(res => res.json()).then(res => { 
+            if(res.success) {
+                // Optimistic Local update, tidak usah sync server
+                if(type === 'IN') { dummyAbsensi.unshift(res.data); } 
+                else if(type === 'OUT') { 
+                    let exist = dummyAbsensi.find(a => a.id_user === currentUser.id && a.waktu_out === '-'); 
+                    if(exist) exist.waktu_out = res.data.waktu_out;
+                }
+                Swal.fire({ icon: 'success', title: `Scan ${type} Berhasil!`, html: `<p class="text-slate-600 font-medium">Tercatat di Server</p><img src="${base64Image}" class="mt-4 rounded-xl mx-auto w-48 border-4 border-emerald-100 shadow-md">`, confirmButtonColor: '#10b981' });
+            } else Swal.fire('Ditolak', res.message, 'error'); 
+        });
     }
 
     function renderSiswaIzin() {
