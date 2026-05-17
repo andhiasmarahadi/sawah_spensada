@@ -7,23 +7,17 @@
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-    
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- SweetAlert2 untuk Notifikasi Keren -->
+    <!-- SweetAlert2 -->
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-
-    <!-- SheetJS (Excel Export/Import Asli) -->
+    <!-- SheetJS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-
-    <!-- Face-API.js (CDN) untuk struktur deteksi -->
+    <!-- Face-API.js -->
     <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-
-    <!-- Leaflet CSS & JS untuk Peta Interaktif -->
+    <!-- Leaflet CSS & JS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -33,287 +27,182 @@
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .sidebar-transition { transition: transform 0.3s ease-in-out; }
         
-        /* Animasi Scanner Wajah */
         .scan-line {
             width: 100%; height: 4px; background: rgba(59, 130, 246, 0.8);
-            position: absolute; top: 0; left: 0;
-            animation: scan 2s infinite linear;
-            box-shadow: 0 0 15px rgba(59, 130, 246, 0.8);
+            position: absolute; top: 0; left: 0; animation: scan 2s infinite linear; box-shadow: 0 0 15px rgba(59, 130, 246, 0.8);
         }
-        @keyframes scan {
-            0% { top: 0; } 50% { top: 100%; } 100% { top: 0; }
-        }
+        @keyframes scan { 0% { top: 0; } 50% { top: 100%; } 100% { top: 0; } }
         
-        /* Leaflet map fix inside flex container */
         #map-picker { z-index: 1; }
-        
-        /* Custom scrollbar for tables */
         .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scroll::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-        .custom-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
     </style>
 </head>
 <body class="text-gray-800 antialiased overflow-hidden">
 
 <script>
     // ==========================================
-    // KONFIGURASI APLIKASI
+    // KONFIGURASI APLIKASI UTAMA
     // ==========================================
-    // MODE PRODUKSI AKTIF (Menggunakan Data Asli Database)
-    const IS_PREVIEW = false; 
-    
-    // GANTI DENGAN URL WEB APP GOOGLE APPS SCRIPT ANDA
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbxI5LW5Jv6uUfiQgfRilMhFF-wrQ4sTUGzFclkcY54KcD9TmlGOn1mdbmPswvkKrp6b4w/exec"; 
-    
+    // WAJIB DIGANTI DENGAN URL WEB APP GOOGLE APPS SCRIPT ANDA
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbww997sf71j-KmjASWce1ViGau6nlpPQxdMac9oDpWKkjSlQO7IRfizfFJv7KXkX3IMag/exec"; 
     const APP_LOGO = "https://i.imghippo.com/files/Qvgj6380ctk.png";
 
-    // --- DATA DUMMY (Hanya dipanggil jika ada error atau Preview Mode) ---
-    let dummyUsers = [];
-    let dummyAbsensi = [];
-    let dummyLokasi = [{ id: 'l1', nama: 'Gerbang Utama SMPN 1', lat: -8.5361, lon: 115.4215, radius: 100 }];
-    let dummyIzin = [];
-    let dummyPengaturan = { scan_in_start: '06:00', scan_in_end: '07:15', scan_out_start: '14:00', scan_out_end: '16:00' };
+    // STATE APLIKASI (Data Dari Server)
+    let currentUser = null; 
+    let appData = { users: [], absensi: [], lokasi: [], izin: [] };
+    
+    let stream = null; let mapInstance = null; let mapMarker = null; let activeInterval = null;
 
-    // --- FUNGSI AKSI GLOBAL ---
-    window.deleteAllData = function(type) {
+    // --- PENGIRIMAN DATA KE SERVER (WRAPPER) ---
+    async function apiCall(payload) {
+        try {
+            const response = await fetch(GAS_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify(payload)
+            });
+            return await response.json();
+        } catch (error) {
+            console.error("API Error:", error);
+            return { success: false, message: 'Gagal terhubung ke Server Database.' };
+        }
+    }
+
+    // --- FUNGSI MENGAMBIL SELURUH DATA SETELAH LOGIN ---
+    async function fetchAllData() {
+        Swal.fire({ title: 'Menyinkronkan Database...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); }});
+        const res = await apiCall({ action: 'getData' });
+        if(res.success) {
+            appData = res.data;
+            // Join Absensi dengan nama & kelas dari Users
+            appData.absensi = appData.absensi.map(absen => {
+                let u = appData.users.find(x => x.id === absen.id_user);
+                return { ...absen, nama: u ? u.nama : 'Unknown', kelas: u ? u.kelas : '-' };
+            });
+            Swal.close();
+            renderApp();
+        } else {
+            Swal.fire('Error', 'Gagal memuat data dari Spreadsheet', 'error');
+        }
+    }
+
+    // --- FUNGSI AKSI (CRUD) KE SERVER ---
+    window.deleteSingle = function(id, type, sheetName) {
+         Swal.fire({ title: 'Hapus Data Ini?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Ya, Hapus' }).then(async res => {
+             if(res.isConfirmed) {
+                 Swal.fire({ title: 'Menghapus...', didOpen: () => Swal.showLoading() });
+                 let resp = await apiCall({ action: 'deleteData', sheetName: sheetName, id: id });
+                 if(resp.success) {
+                     if(type === 'user') appData.users = appData.users.filter(u => u.id !== id);
+                     if(type === 'lokasi') appData.lokasi = appData.lokasi.filter(l => l.id !== id);
+                     Swal.fire('Terhapus', 'Data berhasil dihapus dari Sheets.', 'success');
+                     changeView('admin-' + (type==='user'?'users':'lokasi'));
+                 } else { Swal.fire('Error', resp.message, 'error'); }
+             }
+         });
+    };
+
+    window.showAddUserModal = function() {
         Swal.fire({
-            title: 'Hapus Semua Data?',
-            text: `Anda yakin ingin mengosongkan seluruh data ${type}?`,
-            icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', cancelButtonColor: '#94a3b8', confirmButtonText: 'Ya, Kosongkan!'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                Swal.fire('Terhapus!', `Semua data ${type} telah dibersihkan. (Mode Lokal)`, 'success');
-                changeView(type === 'anggota' ? 'admin-users' : (type === 'absensi' ? 'admin-absensi' : (type === 'lokasi' ? 'admin-lokasi' : 'admin-izin')));
+            title: '<div class="text-xl font-bold text-slate-800">Tambah Anggota</div>',
+            html: `
+                <div class="text-left px-2 mt-4">
+                    <div class="mb-3"><label class="block text-xs font-bold text-slate-500">Nama Lengkap</label><input id="swal-nama" class="w-full border p-2 text-sm rounded-lg" required></div>
+                    <div class="mb-3"><label class="block text-xs font-bold text-slate-500">NISN / NIP (Jadi Username)</label><input id="swal-nisn" class="w-full border p-2 text-sm rounded-lg" required></div>
+                    <div class="grid grid-cols-2 gap-3 mb-1">
+                        <div><label class="block text-xs font-bold text-slate-500">Akses</label><select id="swal-role" class="w-full border p-2 text-sm rounded-lg"><option value="Siswa">Siswa</option><option value="Wali">Wali Kelas</option><option value="Admin">Admin</option></select></div>
+                        <div><label class="block text-xs font-bold text-slate-500">Kelas</label><input id="swal-kelas" placeholder="Cth: 7A" class="w-full border p-2 text-sm rounded-lg"></div>
+                    </div>
+                    <p class="text-[10px] text-slate-400 mt-2 text-center">Password default: 123456</p>
+                </div>
+            `,
+            showCancelButton: true, confirmButtonText: 'Simpan ke Server', confirmButtonColor: '#2563eb',
+            preConfirm: () => {
+                let v = { nama: document.getElementById('swal-nama').value, nisn: document.getElementById('swal-nisn').value, role: document.getElementById('swal-role').value, kelas: document.getElementById('swal-kelas').value || '-' };
+                if(!v.nama || !v.nisn) return Swal.showValidationMessage('Nama dan NISN wajib diisi!'); return v;
+            }
+        }).then(async (result) => {
+            if (result.isConfirmed) { 
+                Swal.fire({ title: 'Menyimpan...', didOpen: () => Swal.showLoading() });
+                let resp = await apiCall({ action: 'addUser', ...result.value });
+                if(resp.success) { Swal.fire('Berhasil', 'User tersimpan di Spreadsheet', 'success'); fetchAllData(); } 
+                else { Swal.fire('Gagal', resp.message, 'error'); }
             }
         });
     };
 
-    window.deleteSingle = function(id, type) {
-         Swal.fire({ title: 'Hapus Item Ini?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Hapus' }).then(res => {
-             if(res.isConfirmed) { Swal.fire('Terhapus', 'Item berhasil dihapus.', 'success'); changeView('admin-' + (type==='user'?'users':'lokasi')); }
-         });
+    window.simpanLokasiBaru = async function() {
+        let payload = {
+            action: 'addLokasi', nama: document.getElementById('lokasi-nama').value,
+            lat: document.getElementById('lat').value, lon: document.getElementById('lon').value,
+            radius: document.getElementById('radius').value
+        };
+        if(!payload.nama || !payload.lat) return Swal.fire('Error', 'Lengkapi data.', 'error');
+        
+        Swal.fire({ title: 'Menyimpan...', didOpen: () => Swal.showLoading() });
+        let resp = await apiCall(payload);
+        if(resp.success) { Swal.fire('Berhasil', 'Lokasi tersimpan.', 'success'); fetchAllData(); } 
+        else { Swal.fire('Gagal', resp.message, 'error'); }
     };
 
-    window.updateIzin = function(id, status) {
-        Swal.fire('Berhasil', `Status Keterangan diubah menjadi: ${status}`, 'success');
-        changeView(currentUser.role === 'Admin' ? 'admin-izin' : 'wali-izin');
-    };
-
-    window.mockAction = function(title) {
-        Swal.fire(title, 'Fungsi ini sedang dikembangkan.', 'info');
-    };
-
-    // --- FUNGSI FILTERING ---
+    // --- FILTERING FRONTEND ---
     window.filterAbsensi = function() {
         let keyword = document.getElementById('search-absensi').value.toLowerCase();
-        let kelas = document.getElementById('filter-kelas') ? document.getElementById('filter-kelas').value : "";
-        let tanggal = document.getElementById('filter-tanggal').value;
         let rows = document.querySelectorAll(`#table-absensi tbody tr`);
         rows.forEach(row => {
             if(row.children.length === 1) return; 
-            let text = row.innerText.toLowerCase();
-            let rowKelas = row.children[2].innerText;
-            let rowTanggal = row.children[3].innerText;
-            row.style.display = (text.includes(keyword) && (kelas === "" || rowKelas === kelas) && (tanggal === "" || rowTanggal === tanggal)) ? '' : 'none';
+            row.style.display = row.innerText.toLowerCase().includes(keyword) ? '' : 'none';
         });
     };
 
     window.filterUsers = function() {
-        let keyword = document.getElementById('search-users') ? document.getElementById('search-users').value.toLowerCase() : '';
-        let kelas = document.getElementById('filter-kelas-user') ? document.getElementById('filter-kelas-user').value : '';
+        let keyword = document.getElementById('search-users').value.toLowerCase();
         let rows = document.querySelectorAll(`#table-users tbody tr`);
         rows.forEach(row => {
             if(row.children.length === 1) return; 
-            let text = row.innerText.toLowerCase();
-            let rowKelas = row.children[4] ? row.children[4].innerText : ''; 
-            row.style.display = (text.includes(keyword) && (kelas === "" || rowKelas === kelas)) ? '' : 'none';
+            row.style.display = row.innerText.toLowerCase().includes(keyword) ? '' : 'none';
         });
     };
 
-    // --- FUNGSI LULUS DAN NAIK KELAS ---
-    window.luluskanSiswa = function() {
-        Swal.fire({ title: 'Luluskan Siswa?', text: `Fitur meluluskan semua siswa kelas 9 aktif.`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#f59e0b', confirmButtonText: 'Ya, Luluskan!' })
-        .then((result) => { if (result.isConfirmed) Swal.fire('Berhasil!', `Siswa Kelas 9 telah diluluskan.`, 'success'); });
-    };
-
-    window.naikkanSiswa = function() {
-        Swal.fire({ title: 'Naikkan Kelas?', text: `Yakin menaikkan siswa kelas 7 ke 8, dan 8 ke 9?`, icon: 'question', showCancelButton: true, confirmButtonColor: '#4f46e5', confirmButtonText: 'Ya, Naikkan!' })
-        .then((result) => { if (result.isConfirmed) Swal.fire('Berhasil!', 'Semua siswa telah dinaikkan kelasnya.', 'success'); });
-    };
-
-    // --- MODAL MANAJEMEN ANGGOTA ---
-    window.showAddUserModal = function() {
-        Swal.fire({
-            title: '<div class="flex flex-col items-center"><div class="w-14 h-14 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-2 shadow-inner"><i class="fas fa-user-plus text-2xl"></i></div><span class="text-xl font-bold text-slate-800">Tambah Anggota</span></div>',
-            html: `
-                <div class="text-left px-2 mt-4">
-                    <p class="text-xs text-slate-500 mb-4 text-center leading-relaxed">Password default untuk akun baru adalah <b>123456</b>.</p>
-                    <div class="mb-3">
-                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-user-circle text-blue-500 mr-1"></i> Nama Lengkap</label>
-                        <input id="swal-nama" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50" placeholder="Contoh: Budi Santoso" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-id-card text-emerald-500 mr-1"></i> NISN / NIP</label>
-                        <input id="swal-nisn" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50" placeholder="Ketik nomor identitas..." required>
-                    </div>
-                    <div class="grid grid-cols-2 gap-3 mb-1">
-                        <div>
-                            <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-user-shield text-purple-500 mr-1"></i> Akses</label>
-                            <select id="swal-role" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50">
-                                <option value="Siswa">Siswa</option><option value="Wali">Wali Kelas</option><option value="Admin">Admin</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-chalkboard text-amber-500 mr-1"></i> Kelas</label>
-                            <select id="swal-kelas" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50">
-                                <option value="-">Kosongkan</option>
-                                <optgroup label="Kelas 7"><option value="7A">7A</option><option value="7B">7B</option></optgroup>
-                                <optgroup label="Kelas 8"><option value="8A">8A</option><option value="8B">8B</option></optgroup>
-                                <optgroup label="Kelas 9"><option value="9A">9A</option><option value="9B">9B</option></optgroup>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-            `,
-            focusConfirm: false, showCancelButton: true, confirmButtonText: '<i class="fas fa-save mr-1"></i> Simpan Data', cancelButtonText: 'Batal',
-            confirmButtonColor: '#2563eb', customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl', cancelButton: 'rounded-xl' },
-            preConfirm: () => {
-                let v = { nama: document.getElementById('swal-nama').value, nisn: document.getElementById('swal-nisn').value, role: document.getElementById('swal-role').value, kelas: document.getElementById('swal-kelas').value };
-                if(!v.nama) return Swal.showValidationMessage('Nama wajib diisi!'); return v;
-            }
-        }).then((result) => {
-            if (result.isConfirmed) { Swal.fire({icon: 'success', title: 'Tersimpan', text: 'Anggota berhasil ditambahkan.', timer: 1500}); changeView('admin-users'); }
-        });
-    };
-
-    window.showEditUserModal = function(id) {
-        Swal.fire({
-            title: '<div class="text-xl font-bold text-slate-800">Edit Data Anggota</div>',
-            html: `<div class="px-2 mt-4 text-left"><div class="mb-3"><label class="block text-[11px] font-bold text-slate-500">Nama</label><input id="swal-edit-nama" class="w-full border p-2.5 rounded-xl"></div><div class="mb-3"><label class="block text-[11px] font-bold text-slate-500">Password</label><input id="swal-edit-pass" class="w-full border p-2.5 rounded-xl"></div></div>`,
-            showCancelButton: true, confirmButtonText: 'Update Data', confirmButtonColor: '#2563eb'
-        }).then((result) => { if(result.isConfirmed) Swal.fire({icon: 'success', title: 'Terupdate', timer: 1500}); });
-    };
-
-    window.downloadTemplate = function() {
-        const ws_data = [["NISN", "Nama Siswa", "Kelas", "No Absen", "Tahun Pelajaran", "Foto"], ["0012345678", "Siswa Teladan Satu", "7A", "1", "2026/2027", ""]];
-        const ws = XLSX.utils.aoa_to_sheet(ws_data); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Template_Data");
-        XLSX.writeFile(wb, "Template_Data_Anggota_SAWAH.xlsx");
-        Swal.fire({ icon: 'success', title: 'Berhasil!', html: '<p class="text-sm text-slate-600">Template <b>Excel (.xlsx)</b> berhasil diunduh.</p>' });
-    };
-
-    window.showImportModal = function() {
-        Swal.fire({
-            title: '<div class="flex flex-col items-center"><span class="text-xl font-bold text-slate-800">Import Kolektif</span></div>',
-            html: `
-                <div class="text-center px-2 mt-2">
-                    <div class="relative bg-white border-2 border-dashed border-emerald-300 rounded-xl p-6 hover:bg-emerald-50 transition cursor-pointer overflow-hidden shadow-sm">
-                        <input type="file" accept=".xlsx, .xls" id="file-import" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer z-10" onchange="document.getElementById('file-name-display').innerText = this.files[0].name;">
-                        <i class="fas fa-cloud-upload-alt text-4xl text-emerald-500 mb-3"></i>
-                        <h4 class="text-sm font-bold text-slate-700">Pilih File</h4><p class="text-[11px] text-slate-400 mt-1" id="file-name-display">Maksimal 5MB</p>
-                    </div>
-                </div>
-            `,
-            showCancelButton: true, confirmButtonText: 'Proses Import', confirmButtonColor: '#10b981'
-        }).then((res) => {
-            if(res.isConfirmed) { Swal.fire({ icon: 'success', title: 'Berhasil!', text: `Data siswa ditambahkan.`, timer: 2000 }); }
-        });
-    };
-
-    window.simpanLokasiBaru = function() {
-        Swal.fire('Tersimpan', 'Titik lokasi baru ditambahkan.', 'success'); changeView('admin-lokasi');
-    };
-
-    window.simpanProfil = function() {
-        Swal.fire({ icon: 'success', title: 'Tersimpan', timer: 1500 });
-        setTimeout(() => { changeView('profil'); }, 500);
-    };
-
-    let currentUser = null; let stream = null; let mapInstance = null; let mapMarker = null; let activeInterval = null;
-
-    window.onload = () => { renderApp(); };
+    // ==========================================
+    // RENDER ENGINE (UI)
+    // ==========================================
+    window.onload = () => { const root = document.createElement('div'); root.id = 'app-root'; root.className = 'w-full h-screen'; document.body.appendChild(root); root.appendChild(createLoginView()); };
 
     function renderApp() {
-        const root = document.createElement('div'); root.id = 'app-root'; root.className = 'w-full h-screen';
-        if (!currentUser) root.appendChild(createLoginView()); else root.appendChild(createDashboardView());
-        document.body.innerHTML = ''; document.body.appendChild(root);
+        const root = document.getElementById('app-root'); root.innerHTML = '';
+        root.appendChild(createDashboardView());
     }
-
-    function showLoading(msg = 'Memproses...') { Swal.fire({ title: msg, allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } }); }
 
     function createLoginView() {
-        const container = document.createElement('div'); container.className = 'flex w-full h-full';
-        const leftPanel = document.createElement('div');
-        leftPanel.className = 'hidden md:flex w-1/2 bg-gradient-to-br from-blue-900 via-indigo-800 to-blue-900 justify-center items-center p-12 flex-col text-white shadow-inner';
-        leftPanel.innerHTML = `
-            <div class="bg-white p-4 rounded-full shadow-2xl mb-8 transform hover:scale-105 transition-transform duration-500"><img src="${APP_LOGO}" alt="Logo" class="w-48 h-auto"></div>
-            <h1 class="text-4xl font-extrabold mb-4 tracking-wider text-center drop-shadow-lg">SAWAH</h1>
-            <div class="h-1 w-16 bg-blue-400 rounded mb-4"></div>
-            <p class="text-lg text-blue-100 text-center max-w-md leading-relaxed font-light">Sistem Absensi Wajah Terintegrasi<br><span class="font-semibold text-white">SMP Negeri 1 Dawan</span></p>
-        `;
-
-        const rightPanel = document.createElement('div'); rightPanel.className = 'w-full md:w-1/2 bg-white flex justify-center items-center p-8 relative overflow-hidden';
-        const decor = document.createElement('div'); decor.className = 'absolute -top-32 -right-32 w-64 h-64 bg-blue-50 rounded-full mix-blend-multiply filter blur-2xl opacity-70 animate-blob';
-        rightPanel.appendChild(decor);
-
-        const formBox = document.createElement('div'); formBox.className = 'w-full max-w-md relative z-10';
-        formBox.innerHTML = `
-            <div class="md:hidden flex justify-center mb-8"><div class="bg-white p-3 rounded-full shadow-lg border border-gray-100"><img src="${APP_LOGO}" alt="Logo" class="w-24 h-auto"></div></div>
-            <h2 class="text-3xl font-bold text-gray-800 mb-2">Selamat Datang</h2>
-            <p class="text-gray-500 mb-8 font-medium">Silakan masuk untuk melanjutkan</p>
-            <form id="loginForm" class="space-y-6">
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1">Username / NISN / NIP</label>
-                    <div class="relative rounded-lg shadow-sm">
-                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><i class="fas fa-user text-blue-500"></i></div>
-                        <input type="text" id="username" required placeholder="Masukkan identitas..." class="focus:ring-2 focus:ring-blue-500 block w-full pl-11 pr-4 py-3 sm:text-sm border-gray-300 rounded-lg bg-gray-50 border outline-none">
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1">Password</label>
-                    <div class="relative rounded-lg shadow-sm">
-                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><i class="fas fa-lock text-blue-500"></i></div>
-                        <input type="password" id="password" required placeholder="Masukkan password..." class="focus:ring-2 focus:ring-blue-500 block w-full pl-11 pr-4 py-3 sm:text-sm border-gray-300 rounded-lg bg-gray-50 border outline-none">
-                    </div>
-                </div>
-                <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-md text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none transition-all transform active:scale-95">MASUK SISTEM <i class="fas fa-arrow-right ml-2 mt-1"></i></button>
-            </form>
-            <div class="mt-8 text-center text-xs text-gray-500 bg-gray-50 p-4 rounded-lg border border-gray-100 shadow-inner">
-                <p class="font-bold text-gray-600 mb-3"><i class="fas fa-info-circle text-blue-500 mr-1"></i> Info: Sistem Live terhubung ke Server</p>
+        const container = document.createElement('div'); container.className = 'flex w-full h-full bg-slate-50';
+        container.innerHTML = `
+            <div class="hidden md:flex w-1/2 bg-gradient-to-br from-blue-900 via-indigo-800 to-blue-900 justify-center items-center flex-col text-white shadow-inner">
+                <div class="bg-white p-4 rounded-full shadow-2xl mb-8"><img src="${APP_LOGO}" alt="Logo" class="w-48 h-auto"></div>
+                <h1 class="text-4xl font-extrabold mb-4 tracking-wider">SAWAH</h1><div class="h-1 w-16 bg-blue-400 rounded mb-4"></div>
+                <p class="text-lg text-blue-100 font-light">Sistem Absensi Wajah Terintegrasi</p>
             </div>
-        `;
-        formBox.querySelector('form').addEventListener('submit', handleLogin);
-        rightPanel.appendChild(formBox); container.appendChild(leftPanel); container.appendChild(rightPanel);
+            <div class="w-full md:w-1/2 flex justify-center items-center p-8 bg-white">
+                <div class="w-full max-w-md">
+                    <div class="md:hidden flex justify-center mb-8"><img src="${APP_LOGO}" class="w-24 h-auto"></div>
+                    <h2 class="text-3xl font-bold text-gray-800 mb-2">Selamat Datang</h2><p class="text-gray-500 mb-8 font-medium">Masuk untuk melanjutkan</p>
+                    <form id="loginForm" class="space-y-6">
+                        <div><label class="block text-sm font-semibold text-gray-700 mb-1">Username / NISN</label><input type="text" id="username" required class="w-full p-3 border rounded-lg bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500"></div>
+                        <div><label class="block text-sm font-semibold text-gray-700 mb-1">Password</label><input type="password" id="password" required class="w-full p-3 border rounded-lg bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500"></div>
+                        <button type="submit" class="w-full py-3 bg-blue-600 text-white font-bold rounded-lg shadow-md hover:bg-blue-700 transition">MASUK SISTEM</button>
+                    </form>
+                    <div class="mt-8 text-center text-xs text-gray-500 bg-emerald-50 p-3 rounded border border-emerald-100"><i class="fas fa-database text-emerald-600 mr-1"></i> Aplikasi Live (Koneksi ke Google Sheets Aktif)</div>
+                </div>
+            </div>`;
+        container.querySelector('form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            Swal.fire({ title: 'Verifikasi Server...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); }});
+            let resp = await apiCall({ action: 'login', username: document.getElementById('username').value, password: document.getElementById('password').value });
+            if(resp.success) { currentUser = resp.user; fetchAllData(); } else { Swal.fire('Gagal Login', resp.message, 'error'); }
+        });
         return container;
-    }
-
-    // =========================================================================
-    // API Handler yang mendukung mode PREVIEW / LIVE GAS CORS
-    // =========================================================================
-    function handleLogin(e) {
-        e.preventDefault();
-        const userVal = document.getElementById('username').value;
-        const passVal = document.getElementById('password').value;
-        showLoading('Memverifikasi Koneksi Server...');
-
-        if (IS_PREVIEW) {
-            Swal.fire({ icon: 'error', title: 'Gagal', text: 'Ganti IS_PREVIEW menjadi false dan isi URL GAS untuk login ke server.' });
-        } else {
-            const payload = { action: 'login', username: userVal, password: passVal };
-            fetch(GAS_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payload)
-            })
-            .then(res => res.json())
-            .then(data => {
-                if(data.success) { currentUser = data.user; Swal.fire('Berhasil', 'Login Sukses', 'success'); renderApp(); } 
-                else { Swal.fire('Gagal Login', data.message, 'error'); }
-            }).catch(err => {
-                console.error("Error Fetch:", err);
-                Swal.fire('Error Server', 'Gagal terhubung ke Google Apps Script. Pastikan URL sudah benar dan Web App diset ke "Anyone".', 'error');
-            });
-        }
     }
 
     function createDashboardView() {
@@ -324,147 +213,136 @@
         let menuItems = '';
         if (currentUser.role === 'Admin') {
             menuItems = `
-                <div class="px-6 py-5 font-bold text-lg text-white border-b border-slate-800 bg-slate-950 flex items-center"><i class="fas fa-shield-alt text-blue-500 mr-3 text-xl"></i> Panel Admin</div>
+                <div class="px-6 py-5 font-bold text-lg text-white border-b border-slate-800 bg-slate-950 flex items-center"><i class="fas fa-shield-alt text-blue-500 mr-3"></i> Panel Admin</div>
                 <nav class="flex-1 px-3 py-6 space-y-1 overflow-y-auto">
-                    <a href="#" onclick="changeView('admin-dashboard')" data-view="admin-dashboard" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-home w-6"></i> Dashboard</a>
-                    <a href="#" onclick="changeView('admin-users')" data-view="admin-users" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-users w-6"></i> Data Anggota</a>
-                    <a href="#" onclick="changeView('admin-absensi')" data-view="admin-absensi" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-calendar-check w-6"></i> Data Absensi</a>
-                    <a href="#" onclick="changeView('admin-lokasi')" data-view="admin-lokasi" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-map-marker-alt w-6"></i> Data Lokasi</a>
-                    <a href="#" onclick="changeView('admin-izin')" data-view="admin-izin" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-envelope-open-text w-6"></i> Persetujuan Izin</a>
-                    <a href="#" onclick="changeView('admin-waktu')" data-view="admin-waktu" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-clock w-6"></i> Pengaturan Waktu</a>
-                </nav>`;
-        } else if (currentUser.role === 'Wali' || currentUser.role === 'Kepsek') {
-             menuItems = `
-                <div class="px-6 py-5 font-bold text-lg text-white border-b border-slate-800 bg-slate-950 flex items-center"><i class="fas fa-user-tie text-blue-500 mr-3 text-xl"></i> Portal Guru</div>
-                <nav class="flex-1 px-3 py-6 space-y-1">
-                    <a href="#" onclick="changeView('admin-dashboard')" data-view="admin-dashboard" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-home w-6"></i> Dashboard</a>
-                    <a href="#" onclick="changeView('admin-users')" data-view="admin-users" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-users w-6"></i> Data Siswa</a>
-                    <a href="#" onclick="changeView('laporan-absensi')" data-view="laporan-absensi" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-chart-bar w-6"></i> Laporan Absensi</a>
+                    <a href="#" onclick="changeView('admin-dashboard')" data-view="admin-dashboard" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg"><i class="fas fa-home w-6"></i> Dashboard</a>
+                    <a href="#" onclick="changeView('admin-users')" data-view="admin-users" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg"><i class="fas fa-users w-6"></i> Kelola Anggota</a>
+                    <a href="#" onclick="changeView('admin-absensi')" data-view="admin-absensi" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg"><i class="fas fa-calendar-check w-6"></i> Laporan Absensi</a>
+                    <a href="#" onclick="changeView('admin-lokasi')" data-view="admin-lokasi" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg"><i class="fas fa-map-marker-alt w-6"></i> Data Lokasi GPS</a>
                 </nav>`;
         } else {
              menuItems = `
-                <div class="px-6 py-5 font-bold text-lg text-white border-b border-slate-800 bg-slate-950 flex items-center"><i class="fas fa-id-badge text-blue-500 mr-3 text-xl"></i> Portal Siswa</div>
+                <div class="px-6 py-5 font-bold text-lg text-white border-b border-slate-800 bg-slate-950 flex items-center"><i class="fas fa-id-badge text-blue-500 mr-3"></i> Portal Siswa</div>
                 <nav class="flex-1 px-3 py-6 space-y-1">
-                    <a href="#" onclick="changeView('siswa-scan')" data-view="siswa-scan" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-camera w-6"></i> Scan Wajah (Absen)</a>
-                    <a href="#" onclick="changeView('siswa-izin')" data-view="siswa-izin" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-file-medical w-6"></i> Form Izin / Sakit</a>
+                    <a href="#" onclick="changeView('siswa-scan')" data-view="siswa-scan" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg"><i class="fas fa-camera w-6"></i> Scan Absen</a>
+                    <a href="#" onclick="changeView('siswa-riwayat')" data-view="siswa-riwayat" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg"><i class="fas fa-history w-6"></i> Riwayat Saya</a>
                 </nav>`;
         }
 
-        sidebar.innerHTML = menuItems + `<div class="p-4 border-t border-slate-800 bg-slate-950"><button onclick="logout()" class="w-full flex items-center justify-center p-3 bg-red-500/10 hover:bg-red-600 rounded-lg text-red-500 hover:text-white transition-all font-semibold text-sm border border-red-500/20"><i class="fas fa-sign-out-alt mr-2"></i> Keluar</button></div>`;
+        sidebar.innerHTML = menuItems + `<div class="p-4 border-t border-slate-800 bg-slate-950"><button onclick="location.reload()" class="w-full flex items-center justify-center p-3 bg-red-500/10 hover:bg-red-600 rounded-lg text-red-500 hover:text-white transition-all font-semibold text-sm"><i class="fas fa-sign-out-alt mr-2"></i> Keluar</button></div>`;
 
         const main = document.createElement('div'); main.className = 'flex-1 flex flex-col h-screen overflow-hidden';
-        const header = document.createElement('header'); header.className = 'bg-white shadow-sm h-16 flex items-center justify-between px-6 z-10';
-        let userInitials = currentUser.nama.charAt(0);
-        
-        header.innerHTML = `
-            <div class="flex items-center"><button onclick="toggleSidebar()" class="md:hidden text-gray-500 hover:text-blue-600 focus:outline-none mr-4 transition"><i class="fas fa-bars text-xl"></i></button><h2 class="font-bold text-xl text-gray-800" id="header-title">Dashboard</h2></div>
-            <div class="flex items-center bg-slate-50 py-1.5 px-3 rounded-full border border-slate-200">
-                <div class="w-8 h-8 rounded-full overflow-hidden bg-blue-600 flex items-center justify-center text-white font-bold mr-3">${userInitials}</div>
-                <div class="text-right mr-2 hidden sm:block"><div class="text-sm font-bold text-gray-800 leading-tight">${currentUser.nama}</div><div class="text-xs text-blue-600 font-medium">${currentUser.role}</div></div>
-            </div>`;
-
-        const content = document.createElement('main'); content.id = 'main-content'; content.className = 'flex-1 overflow-x-hidden overflow-y-auto bg-slate-50 p-6 custom-scroll';
-        main.appendChild(header); main.appendChild(content); container.appendChild(sidebar); container.appendChild(main);
-
-        setTimeout(() => { if(currentUser.role === 'Siswa') changeView('siswa-scan'); else changeView('admin-dashboard'); }, 0);
+        main.innerHTML = `
+            <header class="bg-white shadow-sm h-16 flex items-center justify-between px-6 z-10">
+                <div class="flex items-center"><button onclick="document.getElementById('sidebar').classList.toggle('hidden')" class="md:hidden text-gray-500 mr-4"><i class="fas fa-bars text-xl"></i></button><h2 class="font-bold text-xl text-gray-800" id="header-title">Dashboard</h2></div>
+                <div class="flex items-center bg-slate-50 py-1.5 px-3 rounded-full border border-slate-200">
+                    <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold mr-3">${currentUser.nama.charAt(0)}</div>
+                    <div class="text-right hidden sm:block"><div class="text-sm font-bold text-gray-800">${currentUser.nama}</div><div class="text-xs text-blue-600">${currentUser.role}</div></div>
+                </div>
+            </header>
+            <main id="main-content" class="flex-1 overflow-x-hidden overflow-y-auto bg-slate-50 p-6 custom-scroll"></main>
+        `;
+        container.appendChild(sidebar); container.appendChild(main);
+        setTimeout(() => { changeView(currentUser.role === 'Admin' ? 'admin-dashboard' : 'siswa-scan'); }, 0);
         return container;
     }
 
-    function toggleSidebar() { document.getElementById('sidebar').classList.toggle('hidden'); }
-
     function changeView(viewName) {
-        document.querySelectorAll('.nav-item').forEach(el => { el.classList.remove('bg-slate-800', 'text-white', 'shadow-inner'); el.classList.add('text-slate-300'); });
+        document.querySelectorAll('.nav-item').forEach(el => { el.classList.remove('bg-slate-800', 'text-white', 'shadow-inner'); el.classList.add('text-slate-300', 'hover:bg-slate-800'); });
         const activeItem = document.querySelector(`.nav-item[data-view="${viewName}"]`);
-        if(activeItem) { activeItem.classList.add('bg-slate-800', 'text-white', 'shadow-inner'); activeItem.classList.remove('text-slate-300'); }
-        if(window.innerWidth < 768) { const sidebar = document.getElementById('sidebar'); if(!sidebar.classList.contains('hidden')) toggleSidebar(); }
-        loadView(viewName);
-    }
-
-    function loadView(viewName) {
+        if(activeItem) { activeItem.classList.add('bg-slate-800', 'text-white', 'shadow-inner'); activeItem.classList.remove('text-slate-300', 'hover:bg-slate-800'); }
+        
         const content = document.getElementById('main-content'); const headerTitle = document.getElementById('header-title');
-        if(stream) { stream.getTracks().forEach(track => track.stop()); stream = null; }
+        if(stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
         if(activeInterval) { clearInterval(activeInterval); activeInterval = null; }
 
         switch(viewName) {
-            case 'profil': headerTitle.innerText = "Pengaturan Profil Pribadi"; content.innerHTML = renderProfil(); break;
-            case 'admin-dashboard':
-                headerTitle.innerText = "Ringkasan Sistem"; content.innerHTML = renderAdminDashboard();
-                activeInterval = setInterval(() => { const clock = document.getElementById('live-clock'); if(clock) clock.innerText = new Date().toLocaleTimeString('id-ID'); }, 1000);
-                break;
-            case 'admin-users': headerTitle.innerText = "Kelola Data Anggota"; content.innerHTML = renderAdminUsers(); break;
-            case 'admin-absensi': headerTitle.innerText = "Data Laporan Absensi"; content.innerHTML = renderAdminAbsensi(); break;
+            case 'admin-dashboard': headerTitle.innerText = "Ringkasan Sistem"; content.innerHTML = renderAdminDashboard(); break;
+            case 'admin-users': headerTitle.innerText = "Data Anggota (Sheets Sync)"; content.innerHTML = renderAdminUsers(); break;
+            case 'admin-absensi': headerTitle.innerText = "Laporan Absensi (Sheets Sync)"; content.innerHTML = renderAdminAbsensi(); break;
             case 'admin-lokasi': headerTitle.innerText = "Manajemen Area GPS"; content.innerHTML = renderAdminLokasi(); setTimeout(initMap, 300); break;
-            case 'admin-izin': headerTitle.innerText = "Validasi Keterangan Tidak Hadir"; content.innerHTML = renderAdminIzin(); break;
-            case 'admin-waktu': headerTitle.innerText = "Pengaturan Jam Operasional"; content.innerHTML = renderAdminWaktu(); break;
             case 'siswa-scan': headerTitle.innerText = "Pindai Wajah Kehadiran"; content.innerHTML = renderSiswaScan(); break;
-            case 'siswa-izin': headerTitle.innerText = "Formulir Izin / Sakit"; content.innerHTML = renderSiswaIzin(); break;
-            case 'laporan-absensi': headerTitle.innerText = "Laporan Absensi Global"; content.innerHTML = renderAdminAbsensi(); break;
+            case 'siswa-riwayat': headerTitle.innerText = "Riwayat Kehadiran Saya"; content.innerHTML = renderSiswaRiwayat(); break;
         }
     }
 
-    function logout() {
-        Swal.fire({ title: 'Keluar Sistem?', text: "Sesi Anda akan diakhiri.", icon: 'warning', showCancelButton: true, confirmButtonColor: '#3b82f6', cancelButtonColor: '#ef4444', confirmButtonText: 'Ya, Keluar!' })
-        .then((result) => { if (result.isConfirmed) { currentUser = null; if(activeInterval) clearInterval(activeInterval); if(stream) stream.getTracks().forEach(t => t.stop()); renderApp(); } });
-    }
-
+    // ==========================================
+    // RENDER FUNGSI (Menampilkan Data Live ke HTML)
+    // ==========================================
     function renderAdminDashboard() {
-        const tglStr = new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
         return `
-            <div class="mb-6 flex flex-col md:flex-row justify-between md:items-center bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                <div class="mb-4 md:mb-0 flex items-center">
-                    <div class="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xl mr-4"><i class="fas fa-school"></i></div>
-                    <div><h3 class="text-2xl font-extrabold text-slate-800 tracking-tight">Dashboard Sekolah</h3><p class="text-sm text-slate-500 font-medium">${tglStr}</p></div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 border-l-4 border-l-blue-500">
+                    <p class="text-sm font-semibold text-slate-500 mb-1">Total Pengguna Terdaftar</p><h3 class="text-4xl font-black text-slate-800">${appData.users.length}</h3>
                 </div>
-                <div class="bg-slate-800 text-white px-6 py-3 rounded-xl shadow-inner text-center border border-slate-700 min-w-[200px]">
-                    <div class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">Jam Server</div>
-                    <div id="live-clock" class="text-3xl font-mono font-bold text-blue-400 tracking-wider">--:--:--</div>
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 border-l-4 border-l-emerald-500">
+                    <p class="text-sm font-semibold text-slate-500 mb-1">Total Data Absensi Tersimpan</p><h3 class="text-4xl font-black text-slate-800">${appData.absensi.length}</h3>
                 </div>
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
-                <div onclick="changeView('admin-users')" class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 cursor-pointer transform hover:-translate-y-1 hover:shadow-lg transition-all relative overflow-hidden">
-                    <div class="absolute top-0 left-0 w-1 h-full bg-blue-500"></div><p class="text-sm font-semibold text-slate-500 mb-1">Kelola Siswa & Guru</p><h3 class="text-2xl font-black text-slate-800">Buka Modul</h3>
-                </div>
-                <div onclick="changeView('admin-absensi')" class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 cursor-pointer transform hover:-translate-y-1 hover:shadow-lg transition-all relative overflow-hidden">
-                    <div class="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div><p class="text-sm font-semibold text-slate-500 mb-1">Presensi Hari Ini</p><h3 class="text-2xl font-black text-slate-800">Cek Log Hadir</h3>
-                </div>
-                <div onclick="changeView('admin-lokasi')" class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 cursor-pointer transform hover:-translate-y-1 hover:shadow-lg transition-all relative overflow-hidden">
-                    <div class="absolute top-0 left-0 w-1 h-full bg-amber-500"></div><p class="text-sm font-semibold text-slate-500 mb-1">Titik Lokasi Aktif</p><h3 class="text-2xl font-black text-slate-800">Set GPS Radius</h3>
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 border-l-4 border-l-amber-500">
+                    <p class="text-sm font-semibold text-slate-500 mb-1">Titik Lokasi Aktif</p><h3 class="text-4xl font-black text-slate-800">${appData.lokasi.length}</h3>
                 </div>
             </div>
-            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex justify-center items-center h-64"><h4 class="text-slate-400 font-bold"><i class="fas fa-database mr-2"></i> Aplikasi Berjalan di Mode Live Server</h4></div>
+            <div class="bg-blue-50 p-6 rounded-2xl border border-blue-100 text-blue-800"><h4 class="font-bold"><i class="fas fa-check-circle mr-2"></i>Sistem Live Berjalan Sempurna</h4><p class="text-sm mt-1">Data yang ditampilkan di menu Data Anggota dan Data Absensi adalah data asli yang ditarik (fetch) dari file Google Sheets Anda.</p></div>
         `;
     }
 
     function renderAdminUsers() {
+        let rows = appData.users.map((u, i) => `
+            <tr class="border-b border-slate-100 hover:bg-slate-50">
+                <td class="px-4 py-3 text-sm">${i+1}</td>
+                <td class="px-4 py-3 text-sm font-bold text-slate-800">${u.nama}</td>
+                <td class="px-4 py-3 text-sm text-slate-600">${u.nisn || u.username}</td>
+                <td class="px-4 py-3 text-sm text-slate-600">${u.kelas}</td>
+                <td class="px-4 py-3 text-sm"><span class="px-2 py-1 text-xs font-bold rounded-full bg-blue-100 text-blue-700">${u.role}</span></td>
+                <td class="px-4 py-3 text-sm"><button onclick="deleteSingle('${u.id}', 'user', 'Users')" class="text-red-500 hover:bg-red-100 p-1.5 rounded"><i class="fas fa-trash"></i></button></td>
+            </tr>`).join('');
+
         return `
-            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 text-center">
-                <h3 class="text-lg font-bold text-slate-800 mb-2">Manajemen User Tersentralisasi</h3>
-                <p class="text-sm text-slate-500 mb-6">Karena aplikasi berjalan dalam mode Live (Terkoneksi ke Google Sheets), seluruh kelola penambahan, pengeditan, atau penghapusan Anggota/Siswa dilakukan secara langsung melalui file Google Sheets Anda di tab <b>Users</b>.</p>
-                <a href="https://docs.google.com/spreadsheets/u/0/" target="_blank" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-lg text-sm font-semibold shadow-sm inline-block"><i class="fas fa-file-excel mr-2"></i> Buka Google Sheets</a>
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-lg font-bold">Direktori Anggota</h3>
+                    <div class="space-x-2"><button onclick="fetchAllData()" class="bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-semibold"><i class="fas fa-sync mr-1"></i> Refresh Data</button><button onclick="showAddUserModal()" class="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold"><i class="fas fa-plus mr-1"></i> Tambah Anggota</button></div>
+                </div>
+                <input type="text" id="search-users" onkeyup="filterUsers()" placeholder="Cari nama..." class="w-full mb-4 border p-2 text-sm rounded-lg outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50">
+                <div class="overflow-x-auto max-h-[450px] custom-scroll border rounded-xl"><table id="table-users" class="w-full text-left relative"><thead class="bg-slate-50 border-b sticky top-0 shadow-sm"><tr><th class="px-4 py-3 text-sm">No</th><th class="px-4 py-3 text-sm">Nama Lengkap</th><th class="px-4 py-3 text-sm">NISN/Username</th><th class="px-4 py-3 text-sm">Kelas</th><th class="px-4 py-3 text-sm">Role</th><th class="px-4 py-3 text-sm">Aksi</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="text-center py-4">Data Kosong</td></tr>'}</tbody></table></div>
             </div>`;
     }
 
-    function renderProfil() {
-        return `<div class="max-w-2xl mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-100 text-center"><h3 class="text-2xl font-black text-slate-800">${currentUser.nama}</h3><p class="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full mt-2 inline-block border border-blue-100">${currentUser.role}</p><p class="mt-8 text-slate-500 text-sm">Penggantian password dapat dikoordinasikan dengan Admin Sekolah.</p></div>`;
-    }
-
     function renderAdminAbsensi() {
-        return `<div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 text-center"><h3 class="text-lg font-bold text-slate-800 mb-2">Laporan Rekam Absensi</h3><p class="text-sm text-slate-500 mb-6">Semua log riwayat scan wajah masuk secara otomatis dan aman (Real-time) di dalam Google Sheets Anda pada tab <b>Absensi</b>.</p><a href="https://docs.google.com/spreadsheets/u/0/" target="_blank" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-lg text-sm font-semibold shadow-sm inline-block"><i class="fas fa-file-excel mr-2"></i> Cek Log di Google Sheets</a></div>`;
+        let rows = appData.absensi.map((a, i) => `
+            <tr class="border-b border-slate-100 hover:bg-slate-50">
+                <td class="px-4 py-3 text-sm">${i+1}</td>
+                <td class="px-4 py-3 text-sm font-bold text-slate-800">${a.nama}</td><td class="px-4 py-3 text-sm text-slate-600">${a.kelas}</td>
+                <td class="px-4 py-3 text-sm">${a.tanggal}</td>
+                <td class="px-4 py-3 text-sm font-bold text-emerald-600">${a.waktu_in}</td><td class="px-4 py-3 text-sm font-bold text-rose-600">${a.waktu_out}</td>
+                <td class="px-4 py-3 text-sm"><button onclick="deleteSingle('${a.id}', 'absensi', 'Absensi')" class="text-red-500 hover:bg-red-100 p-1.5 rounded"><i class="fas fa-trash"></i></button></td>
+            </tr>`).join('');
+
+        return `
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-lg font-bold">Tabel Rekam Absensi</h3>
+                    <button onclick="fetchAllData()" class="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold"><i class="fas fa-sync mr-1"></i> Tarik Data Terbaru</button>
+                </div>
+                <input type="text" id="search-absensi" onkeyup="filterAbsensi()" placeholder="Cari nama atau tanggal..." class="w-full mb-4 border p-2 text-sm rounded-lg outline-none bg-slate-50">
+                <div class="overflow-x-auto max-h-[500px] custom-scroll border rounded-xl"><table id="table-absensi" class="w-full text-left relative"><thead class="bg-slate-50 border-b sticky top-0 shadow-sm"><tr><th class="px-4 py-3 text-sm">No</th><th class="px-4 py-3 text-sm">Nama Siswa</th><th class="px-4 py-3 text-sm">Kelas</th><th class="px-4 py-3 text-sm">Tanggal</th><th class="px-4 py-3 text-sm">Jam Masuk</th><th class="px-4 py-3 text-sm">Jam Keluar</th><th class="px-4 py-3 text-sm">Aksi</th></tr></thead><tbody>${rows || '<tr><td colspan="7" class="text-center py-4">Belum ada data Absensi.</td></tr>'}</tbody></table></div>
+            </div>`;
     }
 
     function renderAdminLokasi() {
         return `
-            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-                <h3 class="text-lg font-bold text-slate-800 mb-4"><i class="fas fa-map-marked-alt text-blue-500 mr-2"></i>Cari Titik Koordinat GPS</h3>
-                <div class="mb-4 border border-slate-200 rounded-xl overflow-hidden relative shadow-sm">
-                    <div id="map-picker" class="w-full h-64 z-10 bg-slate-100"></div>
-                    <div class="absolute top-2 right-2 z-[400]"><button onclick="getGPSCurrent(this)" type="button" class="bg-white text-blue-600 px-3 py-2 rounded-lg shadow-md font-bold text-xs hover:bg-blue-50 border border-slate-100 transition"><i class="fas fa-crosshairs mr-1"></i> Posisi Saat Ini</button></div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white rounded-2xl shadow-sm border p-6">
+                    <h3 class="text-lg font-bold mb-4">Tambah Titik GPS</h3>
+                    <div class="mb-4 border rounded-xl overflow-hidden relative shadow-sm"><div id="map-picker" class="w-full h-64 z-10 bg-slate-100"></div><div class="absolute top-2 right-2 z-[400]"><button onclick="getGPSCurrent(this)" class="bg-white text-blue-600 px-3 py-2 rounded-lg shadow-md font-bold text-xs"><i class="fas fa-crosshairs"></i> Posisi Saat Ini</button></div></div>
+                    <form onsubmit="event.preventDefault(); simpanLokasiBaru();" class="space-y-4">
+                        <div><label class="block text-xs font-bold mb-1">Nama Area</label><input type="text" id="lokasi-nama" required class="w-full border p-2.5 rounded-lg text-sm"></div>
+                        <div class="grid grid-cols-2 gap-4"><div><label class="block text-xs font-bold mb-1">Lat</label><input type="text" id="lat" required readonly class="w-full bg-slate-50 border p-2.5 rounded-lg text-sm"></div><div><label class="block text-xs font-bold mb-1">Lon</label><input type="text" id="lon" required readonly class="w-full bg-slate-50 border p-2.5 rounded-lg text-sm"></div></div>
+                        <div><label class="block text-xs font-bold mb-1">Radius (Meter)</label><input type="number" id="radius" value="50" required class="w-full border p-2.5 rounded-lg text-sm"></div>
+                        <button type="submit" class="w-full bg-blue-600 text-white p-3 rounded-lg font-bold text-sm">Simpan Titik Server</button>
+                    </form>
                 </div>
-                <div class="grid grid-cols-2 gap-4 mb-4">
-                    <div><label class="block text-xs font-bold text-slate-600 mb-1">Lat</label><input type="text" id="lat" readonly class="w-full bg-slate-50 border-slate-300 border rounded-lg p-2.5 text-sm font-mono outline-none"></div>
-                    <div><label class="block text-xs font-bold text-slate-600 mb-1">Lon</label><input type="text" id="lon" readonly class="w-full bg-slate-50 border-slate-300 border rounded-lg p-2.5 text-sm font-mono outline-none"></div>
-                </div>
-                <p class="text-xs text-slate-500 p-3 bg-blue-50 rounded text-center">Salin nilai Lat & Lon ini dan tempelkan ke dalam Google Sheets Anda di tab <b>Lokasi</b>.</p>
+                <div class="bg-white rounded-2xl shadow-sm border p-6"><h3 class="text-lg font-bold mb-4">Daftar Titik Diizinkan</h3><div class="space-y-3">${appData.lokasi.map(l => `<div class="border p-4 bg-slate-50 rounded-xl relative"><h4><b>${l.nama_lokasi}</b></h4><p class="text-xs text-slate-600 mt-1">Lat: ${l.lat}, Lon: ${l.lon} | Rad: ${l.radius}m</p><button onclick="deleteSingle('${l.id}', 'lokasi', 'Lokasi')" class="absolute top-4 right-4 text-red-500"><i class="fas fa-trash"></i></button></div>`).join('')}</div></div>
             </div>`;
     }
 
@@ -481,147 +359,79 @@
         mapInstance.on('click', function (e) { mapMarker.setLatLng(e.latlng); document.getElementById('lat').value = e.latlng.lat.toFixed(6); document.getElementById('lon').value = e.latlng.lng.toFixed(6); });
         setTimeout(() => { mapInstance.invalidateSize(); }, 400);
     }
-
+    
     function getGPSCurrent(btn) {
-        const originalContent = btn.innerHTML; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Mencari...';
         if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    const lat = pos.coords.latitude; const lon = pos.coords.longitude;
-                    document.getElementById('lat').value = lat.toFixed(6); document.getElementById('lon').value = lon.toFixed(6);
-                    if (mapInstance && mapMarker) { const newLatLng = new L.LatLng(lat, lon); mapMarker.setLatLng(newLatLng); mapInstance.setView(newLatLng, 18); }
-                    btn.innerHTML = '<i class="fas fa-check text-emerald-600 mr-2"></i>Ditemukan'; setTimeout(() => { btn.innerHTML = originalContent; }, 3000);
-                }, (err) => { Swal.fire('Error', 'Izin lokasi ditolak/tidak aktif.', 'error'); btn.innerHTML = originalContent; }, { enableHighAccuracy: true, timeout: 10000 }
-            );
-        } else { Swal.fire('Error', 'GPS tidak didukung', 'error'); btn.innerHTML = originalContent; }
+            navigator.geolocation.getCurrentPosition((pos) => {
+                const lat = pos.coords.latitude; const lon = pos.coords.longitude;
+                document.getElementById('lat').value = lat.toFixed(6); document.getElementById('lon').value = lon.toFixed(6);
+                if (mapInstance && mapMarker) { const newLatLng = new L.LatLng(lat, lon); mapMarker.setLatLng(newLatLng); mapInstance.setView(newLatLng, 18); }
+            });
+        }
     }
 
-    function renderAdminWaktu() {
-        return `<div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 max-w-2xl mx-auto text-center"><h3 class="text-2xl font-bold text-slate-800 mb-3">Pengaturan Waktu Server</h3><p class="text-slate-500 mb-6 text-sm">Untuk mengubah batas waktu scan masuk dan pulang, silakan ubah valuenya langsung dari dalam Google Sheets tab <b>Pengaturan</b>.</p></div>`;
-    }
-
-    function renderAdminIzin() {
-        return `<div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 text-center"><h3 class="text-lg font-bold text-slate-800 mb-2">Validasi Keterangan Tidak Hadir</h3><p class="text-sm text-slate-500 mb-6">Rekap persetujuan izin masuk secara real-time ke dalam tab <b>Izin</b> pada Google Sheets.</p></div>`;
-    }
-
-    // =========================================================================
-    // MODUL SCANNER & PENGIRIMAN DATA KE GOOGLE APPS SCRIPT
-    // =========================================================================
+    // ==========================================
+    // LOGIC SCANNER & SISWA
+    // ==========================================
     function renderSiswaScan() {
         setTimeout(startCameraAndGPS, 100);
         return `
-            <div class="max-w-md mx-auto relative">
-                <div class="bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200">
-                    <div class="bg-slate-950 p-5 text-center text-white relative shadow-inner">
-                        <h3 class="text-xl font-bold tracking-wide">Scanner Kehadiran</h3><p class="text-xs text-slate-400 mt-1">Posisikan wajah di dalam garis.</p>
-                        <div id="gps-status" class="absolute top-5 right-5 text-[10px] uppercase font-bold bg-amber-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center"><i class="fas fa-satellite-dish animate-pulse mr-1"></i> Mencari GPS</div>
-                    </div>
-                    <div class="relative bg-slate-900 h-80 flex items-center justify-center overflow-hidden">
-                        <video id="webcam" autoplay playsinline class="w-full h-full object-cover hidden"></video>
-                        <div id="camera-placeholder" class="text-slate-400 text-center px-6"><i class="fas fa-compass text-5xl mb-4 text-slate-600 animate-spin-slow"></i><p id="camera-msg" class="text-sm font-medium">Memverifikasi lokasi GPS...</p></div>
-                        <div id="guide-frame" class="absolute inset-0 pointer-events-none hidden">
-                            <div class="w-52 h-72 border-[3px] border-dashed border-white/60 rounded-full mx-auto mt-4 relative shadow-[0_0_0_9999px_rgba(0,0,0,0.4)]"><div class="scan-line hidden" id="scan-line-anim"></div></div>
-                            <div class="absolute bottom-6 left-0 right-0 flex justify-center"><span id="liveness-instruction" class="bg-slate-900/80 backdrop-blur-sm text-white px-5 py-2 rounded-full text-sm font-bold border border-white/20 shadow-lg tracking-wide">Siap Di-scan</span></div>
-                        </div>
-                    </div>
-                    <div class="p-6 bg-white grid grid-cols-2 gap-4">
-                        <button onclick="processScan('IN')" id="btn-in" disabled class="opacity-50 cursor-not-allowed bg-emerald-500 text-white py-4 rounded-2xl shadow-md hover:bg-emerald-600 transition flex flex-col items-center justify-center group"><i class="fas fa-sign-in-alt text-2xl mb-1 group-hover:-translate-y-1 transition-transform"></i><span class="font-extrabold tracking-wide">SCAN IN</span></button>
-                        <button onclick="processScan('OUT')" id="btn-out" disabled class="opacity-50 cursor-not-allowed bg-rose-500 text-white py-4 rounded-2xl shadow-md hover:bg-rose-600 transition flex flex-col items-center justify-center group"><i class="fas fa-sign-out-alt text-2xl mb-1 group-hover:translate-x-1 transition-transform"></i><span class="font-extrabold tracking-wide">SCAN OUT</span></button>
-                    </div>
+            <div class="max-w-md mx-auto relative"><div class="bg-white rounded-3xl shadow-xl overflow-hidden border">
+                <div class="bg-slate-950 p-5 text-center text-white relative shadow-inner"><h3 class="text-xl font-bold tracking-wide">Scanner Kehadiran</h3><div id="gps-status" class="absolute top-5 right-5 text-[10px] uppercase font-bold bg-amber-500 px-2.5 py-1 rounded-full"><i class="fas fa-spinner fa-spin"></i> GPS</div></div>
+                <div class="relative bg-slate-900 h-80 flex items-center justify-center overflow-hidden">
+                    <video id="webcam" autoplay playsinline class="w-full h-full object-cover hidden"></video>
+                    <div id="camera-placeholder" class="text-slate-400 text-center"><i class="fas fa-compass text-5xl mb-4 animate-spin-slow"></i><p>Akses Lokasi & Kamera</p></div>
+                    <div id="guide-frame" class="absolute inset-0 pointer-events-none hidden"><div class="w-52 h-72 border-[3px] border-dashed border-white/60 rounded-full mx-auto mt-4 relative shadow-[0_0_0_9999px_rgba(0,0,0,0.4)]"><div class="scan-line hidden" id="scan-line-anim"></div></div><div class="absolute bottom-6 w-full flex justify-center"><span id="liveness-instruction" class="bg-slate-900/80 text-white px-5 py-2 rounded-full text-sm font-bold border shadow-lg">Siap Di-scan</span></div></div>
                 </div>
-            </div>`;
+                <div class="p-6 bg-white grid grid-cols-2 gap-4">
+                    <button onclick="processScan('IN')" id="btn-in" disabled class="opacity-50 cursor-not-allowed bg-emerald-500 text-white py-4 rounded-2xl font-extrabold hover:bg-emerald-600 transition"><i class="fas fa-sign-in-alt block text-2xl mb-1"></i>SCAN IN</button>
+                    <button onclick="processScan('OUT')" id="btn-out" disabled class="opacity-50 cursor-not-allowed bg-rose-500 text-white py-4 rounded-2xl font-extrabold hover:bg-rose-600 transition"><i class="fas fa-sign-out-alt block text-2xl mb-1"></i>SCAN OUT</button>
+                </div>
+            </div></div>`;
     }
 
     function startCameraAndGPS() {
-        const video = document.getElementById('webcam'); if(!video) return; 
-        const placeholder = document.getElementById('camera-placeholder'); const guide = document.getElementById('guide-frame');
+        const video = document.getElementById('webcam'); const placeholder = document.getElementById('camera-placeholder'); const guide = document.getElementById('guide-frame');
         const btnIn = document.getElementById('btn-in'); const btnOut = document.getElementById('btn-out'); const gpsStatus = document.getElementById('gps-status');
 
         navigator.geolocation.getCurrentPosition(
             (pos) => {
-                gpsStatus.innerHTML = '<i class="fas fa-check-circle mr-1"></i> GPS Aktif'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-emerald-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
-                placeholder.innerHTML = `<i class="fas fa-camera text-5xl mb-4 text-slate-600"></i><p class="text-sm font-medium">Membuka Kamera...</p>`;
-                
-                // Menyimpan Koordinat Sementara ke DOM untuk dikirim
+                gpsStatus.innerHTML = '<i class="fas fa-check-circle"></i> Valid'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-emerald-500 text-white px-2.5 py-1 rounded-full shadow-md';
                 const tmpLat = document.createElement('input'); tmpLat.type = 'hidden'; tmpLat.id = 'scan-lat'; tmpLat.value = pos.coords.latitude;
                 const tmpLon = document.createElement('input'); tmpLon.type = 'hidden'; tmpLon.id = 'scan-lon'; tmpLon.value = pos.coords.longitude;
                 document.body.appendChild(tmpLat); document.body.appendChild(tmpLon);
                 
-                initCamera(video, placeholder, guide, btnIn, btnOut);
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false }).then((s) => {
+                    stream = s; video.srcObject = stream; video.classList.remove('hidden'); placeholder.classList.add('hidden'); guide.classList.remove('hidden');
+                    btnIn.disabled = false; btnIn.classList.remove('opacity-50', 'cursor-not-allowed'); btnOut.disabled = false; btnOut.classList.remove('opacity-50', 'cursor-not-allowed');
+                });
             },
-            (err) => {
-                gpsStatus.innerHTML = '<i class="fas fa-exclamation-triangle mr-1"></i> GPS Mati'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-rose-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
-                placeholder.innerHTML = `<i class="fas fa-location-arrow text-5xl mb-4 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Izin Lokasi (GPS) Ditolak.</p><p class="text-xs text-slate-500 mt-1">Sistem butuh GPS untuk mencegah kecurangan absen dari rumah.</p>`;
-            }, { enableHighAccuracy: true }
+            (err) => { gpsStatus.innerHTML = '<i class="fas fa-times"></i> GPS Error'; gpsStatus.classList.replace('bg-amber-500', 'bg-rose-500'); }
         );
     }
 
-    function initCamera(video, placeholder, guide, btnIn, btnOut) {
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
-            .then((s) => {
-                stream = s; video.srcObject = stream; video.classList.remove('hidden'); placeholder.classList.add('hidden'); guide.classList.remove('hidden');
-                btnIn.disabled = false; btnIn.classList.remove('opacity-50', 'cursor-not-allowed'); btnOut.disabled = false; btnOut.classList.remove('opacity-50', 'cursor-not-allowed');
-                document.getElementById('liveness-instruction').innerText = "Kamera Siap, Silakan Tekan Tombol.";
-            }).catch((err) => { placeholder.innerHTML = `<i class="fas fa-video-slash text-5xl mb-4 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Akses Kamera Ditolak Browser.</p>`; });
-    }
-
     function processScan(type) {
-        const video = document.getElementById('webcam'); const instruction = document.getElementById('liveness-instruction'); const scanLine = document.getElementById('scan-line-anim');
-        
-        scanLine.classList.remove('hidden'); instruction.innerHTML = `<span class="text-amber-300 animate-pulse">Memverifikasi Wajah...</span>`;
+        const video = document.getElementById('webcam'); const scanLine = document.getElementById('scan-line-anim');
+        scanLine.classList.remove('hidden'); document.getElementById('liveness-instruction').innerText = "Memverifikasi...";
         document.getElementById('btn-in').disabled = true; document.getElementById('btn-out').disabled = true;
 
-        setTimeout(() => {
-            instruction.innerHTML = `<span class="text-emerald-400"><i class="fas fa-check-circle"></i> Wajah Terverifikasi</span>`;
+        setTimeout(async () => {
             const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 240; 
             canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-            saveAttendance(type, canvas.toDataURL('image/jpeg', 0.5));
+            let b64 = canvas.toDataURL('image/jpeg', 0.5);
+            
+            Swal.fire({ title: 'Kirim ke Server...', didOpen: () => Swal.showLoading() });
+            let resp = await apiCall({ action: 'scan', type: type, id_user: currentUser.id, image: b64, lat: document.getElementById('scan-lat').value, lon: document.getElementById('scan-lon').value });
+            
+            if(resp.success) { Swal.fire('Berhasil', 'Absen terkirim.', 'success'); fetchAllData(); } 
+            else { Swal.fire('Gagal', resp.message, 'error'); document.getElementById('scan-line-anim').classList.add('hidden'); document.getElementById('btn-in').disabled = false; document.getElementById('btn-out').disabled = false; }
         }, 1500);
     }
 
-    function saveAttendance(type, base64Image) {
-        document.getElementById('scan-line-anim').classList.add('hidden'); document.getElementById('liveness-instruction').innerText = "Kamera Siap.";
-        document.getElementById('btn-in').disabled = false; document.getElementById('btn-out').disabled = false;
-
-        showLoading(`Menyimpan Data ke Server...`);
-            
-        let posLat = "0", posLon = "0";
-        if (document.getElementById('scan-lat') && document.getElementById('scan-lon')) {
-            posLat = document.getElementById('scan-lat').value; posLon = document.getElementById('scan-lon').value;
-        }
-
-        const payload = {
-            action: 'scan', type: type, id_user: currentUser.id,
-            image: base64Image, lat: posLat, lon: posLon
-        };
-
-        fetch(GAS_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify(payload)
-        })
-        .then(res => res.json())
-        .then(data => { 
-            if(data.success) Swal.fire({ icon: 'success', title: 'Berhasil Tercatat', text: `Absen ${type} Anda telah terkirim ke Server.`, confirmButtonColor: '#10b981' }); 
-            else Swal.fire('Ditolak', data.message, 'error'); 
-        })
-        .catch(err => {
-            console.error("Error Fetch:", err);
-            Swal.fire('Error', 'Gagal koneksi ke database. Pastikan internet stabil dan Web App sudah dipublish dengan benar.', 'error');
-        });
-    }
-
-    function renderSiswaIzin() {
-        return `
-            <div class="max-w-xl mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
-                <h3 class="text-xl font-bold text-slate-800 mb-6 flex items-center"><i class="fas fa-file-medical text-blue-500 mr-2"></i> Lapor Ketidakhadiran</h3>
-                <form onsubmit="event.preventDefault(); Swal.fire('Dikembangkan', 'Fitur ini dalam tahap pengkodean file attachment API', 'info');" class="space-y-5">
-                    <div><label class="block text-sm font-bold text-slate-700 mb-1">Kategori</label><select class="w-full border border-slate-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none"><option>Sakit (Perlu Surat)</option><option>Izin Kepentingan</option></select></div>
-                    <div class="grid grid-cols-2 gap-4"><div><label class="block text-sm font-bold text-slate-700 mb-1">Dari</label><input type="date" required class="w-full border border-slate-300 rounded-xl p-3 outline-none"></div><div><label class="block text-sm font-bold text-slate-700 mb-1">Sampai</label><input type="date" required class="w-full border border-slate-300 rounded-xl p-3 outline-none"></div></div>
-                    <div><label class="block text-sm font-bold text-slate-700 mb-1">Alasan</label><textarea required rows="3" class="w-full border border-slate-300 rounded-xl p-3 outline-none" placeholder="Jelaskan singkat..."></textarea></div>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-md hover:bg-blue-700 transition active:scale-95"><i class="fas fa-paper-plane mr-2"></i> Kirim Form</button>
-                </form>
-            </div>`;
+    function renderSiswaRiwayat() {
+        let myAbsen = appData.absensi.filter(a => a.id_user === currentUser.id);
+        let rows = myAbsen.map(a => `<tr><td class="px-5 py-4 border-b text-sm">${a.tanggal}</td><td class="px-5 py-4 border-b text-sm font-bold text-emerald-600">${a.waktu_in}</td><td class="px-5 py-4 border-b text-sm font-bold text-rose-600">${a.waktu_out}</td></tr>`).join('');
+        return `<div class="bg-white rounded-2xl shadow-sm border p-6"><h3 class="text-lg font-bold mb-4">Riwayat Hadir</h3><table class="w-full text-left"><thead><tr><th class="border-b px-5 py-3">Tanggal</th><th class="border-b px-5 py-3">Scan Masuk</th><th class="border-b px-5 py-3">Scan Keluar</th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="text-center py-4">Data kosong</td></tr>'}</tbody></table></div>`;
     }
 </script>
 </body>
