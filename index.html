@@ -58,67 +58,60 @@
 
 <script>
     // ==========================================
+    // KEAMANAN APLIKASI (Anti Inspect & Klik Kanan)
+    // ==========================================
+    document.addEventListener('contextmenu', event => event.preventDefault()); // Blokir klik kanan
+    document.addEventListener('keydown', function(e) {
+        if(e.keyCode == 123) { e.preventDefault(); return false; } // Blokir F12
+        if(e.ctrlKey && e.shiftKey && (e.keyCode == 'I'.charCodeAt(0) || e.keyCode == 'J'.charCodeAt(0) || e.keyCode == 'C'.charCodeAt(0))) { e.preventDefault(); return false; } // Blokir Ctrl+Shift+I/J/C
+        if(e.ctrlKey && e.keyCode == 'U'.charCodeAt(0)) { e.preventDefault(); return false; } // Blokir Ctrl+U (View Source)
+    });
+
+    // ==========================================
     // KONFIGURASI APLIKASI
     // ==========================================
-    const IS_PREVIEW = false; // Set ke false jika di-deploy ke GAS
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbxceM6Gr8uc0X3-MEQkmIMhhoaY3-vNYftBW4iVJ8TrsYlvH-cOnyLwaCq7OwFsGqZbgw/exec"; 
+    // WAJIB ISI DENGAN URL DEPLOYMENT GAS ANDA
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbwi1x4x-2AZs-AthcXJREMm035C-QFl84PmemK7xaRFnFqVX2dxuOKquO2WsvmLUJNz/exec"; 
     const APP_LOGO = "https://i.imghippo.com/files/Qvgj6380ctk.png";
 
-    // --- DATA DUMMY ---
-    let dummyUsers = [
-        { id: 'u1', username: 'admin', password: 'edudigital', role: 'Admin', nama: 'Administrator', kelas: '-', nisn: '-' },
-        { id: 'u2', username: '198001012000', password: '123456', role: 'Kepsek', nama: 'Bpk. Kepala Sekolah', kelas: '-', nisn: '198001012000' },
-        { id: 'u3', username: '198502022010', password: '123456', role: 'Wali', nama: 'Ibu Wali Kelas 7A', kelas: '7A', nisn: '198502022010' },
-        { id: 'u4', username: '0012345678', password: '123456', role: 'Siswa', nama: 'Siswa Teladan', kelas: '7A', nisn: '0012345678', face_registered: true }
-    ];
-
-    let dummyAbsensi = [
-        { id: 'a1', id_user: 'u4', nama: 'Siswa Teladan', kelas: '7A', tanggal: new Date().toISOString().split('T')[0], waktu_in: '06:45:00', waktu_out: '14:05:00', status: 'Hadir' }
-    ];
-
-    let dummyLokasi = [
-        { id: 'l1', nama: 'Gerbang Utama SMPN 1', lat: -8.5361, lon: 115.4215, radius: 100 }
-    ];
-
+    // Data Penampung (Akan diisi otomatis dari Google Sheets setelah Login)
+    let dummyUsers = [];
+    let dummyAbsensi = [];
+    let dummyLokasi = [];
     let dummyIzin = [];
-
     let dummyPengaturan = {
         scan_in_start: '06:00', scan_in_end: '07:15',
         scan_out_start: '14:00', scan_out_end: '16:00'
     };
 
-    // Inject 15 user tambahan agar fitur scrollbar (maks 10 data) terlihat
-    for(let i=1; i<=15; i++) {
-        let nisnDummy = '00112233' + (i < 10 ? '0'+i : i);
-        dummyUsers.push({ id: 'u_dummy_'+i, username: nisnDummy, password: '123456', role: 'Siswa', nama: 'Siswa Simulasi '+i, kelas: '8A', nisn: nisnDummy, face_registered: false });
+    // Fungsi Sinkronisasi Data Master dari Google Sheets
+    async function syncDataFromServer() {
+        try {
+            const response = await fetch(GAS_URL, {
+                method: 'POST',
+                body: JSON.stringify({ action: 'getData' })
+            });
+            const res = await response.json();
+            if(res.success) {
+                dummyUsers = res.data.users || [];
+                dummyAbsensi = res.data.absensi || [];
+                dummyLokasi = res.data.lokasi || [];
+                // Fallback lokasi jika kosong
+                if(dummyLokasi.length === 0) dummyLokasi = [{ id: 'l1', nama: 'Gerbang Utama SMPN 1', lat: -8.5361, lon: 115.4215, radius: 100 }];
+            }
+        } catch (error) { console.error("Gagal menarik data dari server", error); }
     }
-    // Inject Data Dummy Izin & Absensi Tambahan
-    dummyIzin.push({ id: 'iz1', id_user: 'u4', nama: 'Siswa Teladan', kelas: '7A', jenis: 'Sakit', dari: '2026-05-18', sampai: '2026-05-19', status: 'Pending', alasan: 'Demam Berdarah' });
-    dummyIzin.push({ id: 'iz2', id_user: 'u_dummy_1', nama: 'Siswa Simulasi 1', kelas: '8A', jenis: 'Izin', dari: '2026-05-20', sampai: '2026-05-20', status: 'Disetujui', alasan: 'Acara Keluarga' });
-    dummyAbsensi.push({ id: 'a2', id_user: 'u_dummy_4', nama: 'Siswa Simulasi 4', kelas: '8A', tanggal: new Date().toISOString().split('T')[0], waktu_in: '07:20:00', waktu_out: '14:00:00', status: 'Terlambat' });
 
     // --- FUNGSI AKSI GLOBAL ---
     window.deleteAllData = function(type) {
         Swal.fire({
             title: 'Hapus Semua Data?',
             text: `Anda yakin ingin mengosongkan seluruh data ${type}?`,
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#ef4444',
-            cancelButtonColor: '#94a3b8',
-            confirmButtonText: 'Ya, Kosongkan!'
+            icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', cancelButtonColor: '#94a3b8', confirmButtonText: 'Ya, Kosongkan!'
         }).then((result) => {
             if (result.isConfirmed) {
-                if(type === 'anggota') dummyUsers = dummyUsers.filter(u => u.role !== 'Siswa'); 
-                else if(type === 'absensi') dummyAbsensi = [];
-                else if(type === 'lokasi') dummyLokasi = [];
-                else if(type === 'izin') dummyIzin = [];
-                
-                Swal.fire('Terhapus!', `Semua data ${type} telah dibersihkan.`, 'success');
-                if(type === 'anggota') changeView('admin-users');
-                else if(type === 'absensi') changeView('admin-absensi');
-                else if(type === 'lokasi') changeView('admin-lokasi');
-                else if(type === 'izin') changeView(currentUser.role === 'Admin' ? 'admin-izin' : 'wali-izin');
+                // Untuk keamanan, delete semua via web app langsung dihandle ke server
+                Swal.fire('Fitur Terkunci', 'Untuk menghapus massal, silakan hapus langsung dari Google Sheets demi keamanan data.', 'info');
             }
         });
     };
@@ -126,10 +119,18 @@
     window.deleteSingle = function(id, type) {
          Swal.fire({ title: 'Hapus Item Ini?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Hapus' }).then(res => {
              if(res.isConfirmed) {
-                 if(type==='user') dummyUsers = dummyUsers.filter(u => u.id !== id);
-                 else if(type==='lokasi') dummyLokasi = dummyLokasi.filter(l => l.id !== id);
-                 Swal.fire('Terhapus', 'Item berhasil dihapus.', 'success');
-                 changeView('admin-' + (type==='user'?'users':'lokasi'));
+                 Swal.fire({title: 'Menghapus dari Server...', didOpen: () => Swal.showLoading()});
+                 let sheetName = type === 'user' ? 'Users' : 'Lokasi';
+                 fetch(GAS_URL, {
+                     method: 'POST', body: JSON.stringify({ action: 'deleteData', sheet: sheetName, id: id })
+                 }).then(r => r.json()).then(response => {
+                     if(response.success) {
+                         if(type==='user') dummyUsers = dummyUsers.filter(u => u.id !== id);
+                         else if(type==='lokasi') dummyLokasi = dummyLokasi.filter(l => l.id !== id);
+                         Swal.fire('Terhapus', 'Item berhasil dihapus dari Database.', 'success');
+                         changeView('admin-' + (type==='user'?'users':'lokasi'));
+                     } else { Swal.fire('Gagal', response.message, 'error'); }
+                 }).catch(e => Swal.fire('Error', 'Gagal koneksi server', 'error'));
              }
          });
     };
@@ -185,58 +186,11 @@
 
     // --- FUNGSI LULUS DAN NAIK KELAS ---
     window.luluskanSiswa = function() {
-        let siswaKelas9 = dummyUsers.filter(u => u.role === 'Siswa' && u.kelas && u.kelas.startsWith('9'));
-        let jumlah = siswaKelas9.length;
-        
-        if (jumlah === 0) return Swal.fire('Informasi', 'Tidak ada siswa Kelas 9 yang ditemukan di database saat ini.', 'info');
-
-        Swal.fire({
-            title: 'Luluskan Siswa?',
-            text: `Apakah anda akan meluluskan sebanyak ${jumlah} siswa?`,
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#f59e0b',
-            cancelButtonColor: '#94a3b8',
-            confirmButtonText: 'Ya, Luluskan!'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                dummyUsers = dummyUsers.filter(u => !(u.role === 'Siswa' && u.kelas && u.kelas.startsWith('9')));
-                Swal.fire('Berhasil!', `Sebanyak ${jumlah} siswa Kelas 9 telah diluluskan.`, 'success');
-                changeView('admin-users'); 
-            }
-        });
+        Swal.fire('Fitur Live', 'Untuk proses lulus/naik kelas massal, disarankan menggunakan fitur Sort/Filter langsung di Google Sheets Anda agar lebih aman.', 'info');
     };
 
     window.naikkanSiswa = function() {
-        let siswaKelas9 = dummyUsers.filter(u => u.role === 'Siswa' && u.kelas && u.kelas.startsWith('9')).length;
-        if (siswaKelas9 > 0) return Swal.fire('Peringatan', 'Masih ada Siswa Kelas 9 di database, silahkan Luluskan terlebih dahulu', 'error');
-
-        let siswaKelas8 = dummyUsers.filter(u => u.role === 'Siswa' && u.kelas && u.kelas.startsWith('8')).length;
-        let siswaKelas7 = dummyUsers.filter(u => u.role === 'Siswa' && u.kelas && u.kelas.startsWith('7')).length;
-        
-        if (siswaKelas8 === 0 && siswaKelas7 === 0) return Swal.fire('Informasi', 'Tidak ada siswa Kelas 7 atau Kelas 8 untuk dinaikkan.', 'info');
-
-        Swal.fire({
-            title: 'Naikkan Kelas?',
-            text: `Apakah anda yakin menaikkan ${siswaKelas8} siswa kelas 8 ke kelas 9? dan menaikkan ${siswaKelas7} siswa kelas 7 ke kelas 8?`,
-            icon: 'question',
-            showCancelButton: true,
-            confirmButtonColor: '#4f46e5',
-            cancelButtonColor: '#94a3b8',
-            confirmButtonText: 'Ya, Naikkan!'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                dummyUsers = dummyUsers.map(u => {
-                    if (u.role === 'Siswa' && u.kelas) {
-                        if (u.kelas.startsWith('8')) u.kelas = '9' + u.kelas.substring(1);
-                        else if (u.kelas.startsWith('7')) u.kelas = '8' + u.kelas.substring(1);
-                    }
-                    return u;
-                });
-                Swal.fire('Berhasil!', 'Semua siswa yang memenuhi syarat telah dinaikkan kelasnya.', 'success');
-                changeView('admin-users'); 
-            }
-        });
+        Swal.fire('Fitur Live', 'Untuk proses lulus/naik kelas massal, disarankan menggunakan fitur Sort/Filter langsung di Google Sheets Anda agar lebih aman.', 'info');
     };
 
     // --- MODAL MANAJEMEN ANGGOTA ---
@@ -275,13 +229,8 @@
                     </div>
                 </div>
             `,
-            focusConfirm: false,
-            showCancelButton: true,
-            confirmButtonText: '<i class="fas fa-save mr-1"></i> Simpan Data',
-            cancelButtonText: 'Batal',
-            confirmButtonColor: '#2563eb',
-            cancelButtonColor: '#94a3b8',
-            customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl', cancelButton: 'rounded-xl' },
+            focusConfirm: false, showCancelButton: true, confirmButtonText: '<i class="fas fa-save mr-1"></i> Simpan Data', cancelButtonText: 'Batal',
+            confirmButtonColor: '#2563eb', cancelButtonColor: '#94a3b8', customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl', cancelButton: 'rounded-xl' },
             preConfirm: () => {
                 return {
                     nama: document.getElementById('swal-nama').value, nisn: document.getElementById('swal-nisn').value,
@@ -292,10 +241,18 @@
             if (result.isConfirmed) {
                 let v = result.value;
                 if(!v.nama) return Swal.fire('Gagal', 'Nama wajib diisi!', 'error');
-                let newId = 'u_new_' + new Date().getTime();
-                dummyUsers.unshift({ id: newId, username: v.nisn, password: '123456', role: v.role, nama: v.nama, kelas: v.kelas, nisn: v.nisn, face_registered: false });
-                Swal.fire({icon: 'success', title: 'Tersimpan', text: 'Anggota berhasil ditambahkan.', timer: 1500, showConfirmButton: false});
-                changeView('admin-users'); 
+                
+                Swal.fire({ title: 'Menyimpan ke Database...', didOpen: () => { Swal.showLoading(); }});
+                fetch(GAS_URL, {
+                    method: 'POST', body: JSON.stringify({ action: 'addUser', data: v })
+                }).then(r => r.json()).then(res => {
+                    if(res.success) {
+                        syncDataFromServer().then(() => {
+                            Swal.fire({icon: 'success', title: 'Tersimpan', text: 'Anggota berhasil ditambahkan ke Database.', timer: 1500, showConfirmButton: false});
+                            changeView('admin-users'); 
+                        });
+                    } else Swal.fire('Gagal', res.message, 'error');
+                });
             }
         });
     };
@@ -339,25 +296,29 @@
                     ${kelasHtml}
                 </div>
             `,
-            focusConfirm: false,
-            showCancelButton: true,
-            confirmButtonText: '<i class="fas fa-save mr-1"></i> Update Data',
-            cancelButtonText: 'Batal',
-            confirmButtonColor: '#2563eb',
-            cancelButtonColor: '#94a3b8',
-            customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl', cancelButton: 'rounded-xl' },
+            focusConfirm: false, showCancelButton: true, confirmButtonText: '<i class="fas fa-save mr-1"></i> Update Data', cancelButtonText: 'Batal',
+            confirmButtonColor: '#2563eb', cancelButtonColor: '#94a3b8', customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl', cancelButton: 'rounded-xl' },
             preConfirm: () => {
-                user.nama = document.getElementById('swal-edit-nama').value;
-                user.nisn = document.getElementById('swal-edit-nisn').value;
-                user.username = document.getElementById('swal-edit-nisn').value; // Sync username
-                user.kelas = document.getElementById('swal-edit-kelas').value;
-                user.password = document.getElementById('swal-edit-pass').value;
-                if(currentUser && currentUser.id === user.id) { currentUser.password = user.password; currentUser.nama = user.nama; }
+                return {
+                    id: user.id, nama: document.getElementById('swal-edit-nama').value,
+                    nisn: document.getElementById('swal-edit-nisn').value, kelas: document.getElementById('swal-edit-kelas').value,
+                    password: document.getElementById('swal-edit-pass').value
+                }
             }
         }).then((result) => {
             if(result.isConfirmed) {
-                Swal.fire({icon: 'success', title: 'Terupdate', text: 'Perubahan berhasil disimpan.', timer: 1500, showConfirmButton: false});
-                changeView('admin-users');
+                Swal.fire({ title: 'Mengupdate Server...', didOpen: () => { Swal.showLoading(); }});
+                fetch(GAS_URL, {
+                    method: 'POST', body: JSON.stringify({ action: 'updateUser', data: result.value })
+                }).then(r => r.json()).then(res => {
+                    if(res.success) {
+                        syncDataFromServer().then(() => {
+                            if(currentUser && currentUser.id === result.value.id) { currentUser.password = result.value.password; currentUser.nama = result.value.nama; }
+                            Swal.fire({icon: 'success', title: 'Terupdate', text: 'Perubahan tersimpan di Sheets.', timer: 1500, showConfirmButton: false});
+                            changeView('admin-users');
+                        });
+                    } else Swal.fire('Gagal', res.message, 'error');
+                });
             }
         });
     };
@@ -373,7 +334,6 @@
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Template_Data");
         XLSX.writeFile(wb, "Template_Data_Anggota_SAWAH.xlsx");
-
         Swal.fire({ icon: 'success', title: 'Berhasil!', html: '<p class="text-sm text-slate-600">Template <b>Excel (.xlsx)</b> berhasil diunduh.</p>', confirmButtonColor: '#10b981' });
     };
 
@@ -393,10 +353,7 @@
                     </div>
                 </div>
             `,
-            showCancelButton: true,
-            confirmButtonText: '<i class="fas fa-upload mr-1"></i> Proses Import',
-            cancelButtonText: 'Batal',
-            confirmButtonColor: '#10b981',
+            showCancelButton: true, confirmButtonText: '<i class="fas fa-upload mr-1"></i> Proses Import', cancelButtonText: 'Batal', confirmButtonColor: '#10b981',
             preConfirm: () => {
                 const fileInput = document.getElementById('file-import');
                 if (!fileInput.files.length) { Swal.showValidationMessage('Pilih file Excel terlebih dahulu!'); return false; }
@@ -405,7 +362,7 @@
         }).then((res) => {
             if(res.isConfirmed && res.value) {
                 const reader = new FileReader();
-                Swal.fire({ title: 'Memproses...', didOpen: () => { Swal.showLoading(); } });
+                Swal.fire({ title: 'Membaca File...', didOpen: () => { Swal.showLoading(); } });
                 reader.onload = function(e) {
                     try {
                         const data = new Uint8Array(e.target.result);
@@ -415,20 +372,28 @@
                         
                         if(json.length === 0) return Swal.fire('Gagal', 'File Excel kosong.', 'error');
 
-                        let count = 0;
+                        let newUsers = [];
                         json.forEach((row, index) => {
                             if(row['Nama Siswa'] && row['NISN']) {
-                                dummyUsers.unshift({
-                                    id: 'u_import_' + new Date().getTime() + '_' + index,
+                                newUsers.push({
                                     username: String(row['NISN']), password: '123456', role: 'Siswa',
-                                    nama: row['Nama Siswa'], kelas: row['Kelas'] || '-', nisn: String(row['NISN']), face_registered: false
+                                    nama: row['Nama Siswa'], kelas: row['Kelas'] || '-', nisn: String(row['NISN'])
                                 });
-                                count++;
                             }
                         });
-                        if(count > 0) {
-                            Swal.fire({ icon: 'success', title: 'Berhasil!', text: `${count} siswa ditambahkan.`, timer: 2000, showConfirmButton: false });
-                            changeView('admin-users'); 
+                        
+                        if(newUsers.length > 0) {
+                            Swal.fire({ title: 'Menyimpan ke Server...', text: 'Tunggu sebentar...' });
+                            fetch(GAS_URL, {
+                                method: 'POST', body: JSON.stringify({ action: 'importUsers', users: newUsers })
+                            }).then(r => r.json()).then(resp => {
+                                if(resp.success) {
+                                    syncDataFromServer().then(() => {
+                                        Swal.fire({ icon: 'success', title: 'Berhasil!', text: `${newUsers.length} siswa diimport ke Sheets.`, timer: 2000, showConfirmButton: false });
+                                        changeView('admin-users'); 
+                                    });
+                                } else Swal.fire('Gagal', resp.message, 'error');
+                            });
                         } else { Swal.fire('Gagal', 'Data tidak valid.', 'error'); }
                     } catch (err) { Swal.fire('Error', 'Gagal membaca file.', 'error'); }
                 };
@@ -439,39 +404,48 @@
 
     window.simpanLokasiBaru = function() {
         let nama = document.getElementById('lokasi-nama').value;
-        let lat = document.getElementById('lat').value;
-        let lon = document.getElementById('lon').value;
-        let radius = document.getElementById('radius').value;
-        
+        let lat = document.getElementById('lat').value; let lon = document.getElementById('lon').value; let radius = document.getElementById('radius').value;
         if(!nama || !lat || !lon) return Swal.fire('Error', 'Lengkapi data koordinat.', 'error');
-        dummyLokasi.push({ id: 'l_new_'+new Date().getTime(), nama: nama, lat: parseFloat(lat), lon: parseFloat(lon), radius: parseInt(radius) });
-        Swal.fire('Tersimpan', 'Titik lokasi baru ditambahkan.', 'success');
-        changeView('admin-lokasi');
+        
+        Swal.fire({ title: 'Menyimpan...', didOpen: () => { Swal.showLoading(); }});
+        fetch(GAS_URL, {
+            method: 'POST', body: JSON.stringify({ action: 'addLokasi', data: { nama: nama, lat: lat, lon: lon, radius: radius } })
+        }).then(r => r.json()).then(res => {
+            if(res.success) {
+                syncDataFromServer().then(() => {
+                    Swal.fire('Tersimpan', 'Titik lokasi baru ditambahkan ke Server.', 'success');
+                    changeView('admin-lokasi');
+                });
+            } else Swal.fire('Gagal', res.message, 'error');
+        });
     };
 
     window.simpanProfil = function() {
-        let userIndex = dummyUsers.findIndex(u => u.id === currentUser.id);
-        if (userIndex === -1) return;
         let hasChanges = false;
+        let pData = { id: currentUser.id, nama: currentUser.nama, password: currentUser.password };
+
         let elPass = document.getElementById('prof-password');
-        if (elPass && elPass.value.trim() !== '') { dummyUsers[userIndex].password = elPass.value.trim(); currentUser.password = elPass.value.trim(); hasChanges = true; }
+        if (elPass && elPass.value.trim() !== '') { pData.password = elPass.value.trim(); hasChanges = true; }
+        
         let elNama = document.getElementById('prof-nama');
-        if (elNama && elNama.value.trim() !== '') { dummyUsers[userIndex].nama = elNama.value.trim(); currentUser.nama = elNama.value.trim(); hasChanges = true; }
-        let elFoto = document.getElementById('prof-foto');
-        if (elFoto && elFoto.files.length > 0) { dummyUsers[userIndex].foto = URL.createObjectURL(elFoto.files[0]); currentUser.foto = dummyUsers[userIndex].foto; hasChanges = true; }
+        if (elNama && elNama.value.trim() !== '') { pData.nama = elNama.value.trim(); hasChanges = true; }
 
         if (hasChanges) {
-            Swal.fire({ icon: 'success', title: 'Tersimpan', timer: 1500, showConfirmButton: false });
-            document.getElementById('header-title').innerText = "Memperbarui Visual...";
-            setTimeout(() => { changeView('profil'); }, 500);
+            Swal.fire({ title: 'Menyimpan ke Server...', didOpen: () => { Swal.showLoading(); }});
+            fetch(GAS_URL, {
+                method: 'POST', body: JSON.stringify({ action: 'updateUser', data: pData })
+            }).then(r => r.json()).then(res => {
+                if(res.success) {
+                    currentUser.password = pData.password; currentUser.nama = pData.nama;
+                    Swal.fire({ icon: 'success', title: 'Tersimpan', text: 'Perubahan Password/Profil tersimpan di Database.', timer: 2000, showConfirmButton: false });
+                    document.getElementById('header-name').innerText = currentUser.nama;
+                    setTimeout(() => { changeView('profil'); }, 500);
+                } else Swal.fire('Gagal', res.message, 'error');
+            }).catch(e => Swal.fire('Error', 'Gagal koneksi ke server', 'error'));
         } else { Swal.fire('Info', 'Tidak ada data diubah.', 'info'); }
     };
 
-    let currentUser = null;
-    let stream = null; 
-    let mapInstance = null;
-    let mapMarker = null;
-    let activeInterval = null;
+    let currentUser = null; let stream = null; let mapInstance = null; let mapMarker = null; let activeInterval = null;
 
     window.onload = () => { renderApp(); };
 
@@ -524,14 +498,8 @@
                 </div>
                 <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-md text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all transform active:scale-95">MASUK SISTEM <i class="fas fa-arrow-right ml-2 mt-1"></i></button>
             </form>
-            <div class="mt-8 text-center text-xs text-gray-500 bg-gray-50 p-4 rounded-lg border border-gray-100 shadow-inner">
-                <p class="font-bold text-gray-600 mb-3"><i class="fas fa-info-circle text-blue-500 mr-1"></i> Informasi Login Default</p>
-                <div class="grid grid-cols-1 gap-2 text-left bg-white p-3 rounded border border-gray-100">
-                    <p>Admin &rarr; User: <span class="font-mono bg-blue-50 text-blue-700 px-1 rounded font-bold">admin</span> | Pass: <span class="font-mono bg-slate-100 px-1 rounded">edudigital</span></p>
-                    <p>Kepsek &rarr; NIP: <span class="font-mono bg-blue-50 text-blue-700 px-1 rounded font-bold">198001012000</span> | Pass: <span class="font-mono bg-slate-100 px-1 rounded font-bold">123456</span></p>
-                    <p>Wali Kelas &rarr; NIP: <span class="font-mono bg-blue-50 text-blue-700 px-1 rounded font-bold">198502022010</span> | Pass: <span class="font-mono bg-slate-100 px-1 rounded font-bold">123456</span></p>
-                    <p>Siswa &rarr; NISN: <span class="font-mono bg-blue-50 text-blue-700 px-1 rounded font-bold">0012345678</span> | Pass: <span class="font-mono bg-slate-100 px-1 rounded font-bold">123456</span></p>
-                </div>
+            <div class="mt-10 text-center">
+                <p class="text-xs font-semibold text-gray-400 tracking-wider">Andhi Asmara Hadi &copy; 2026</p>
             </div>
         `;
         formBox.querySelector('form').addEventListener('submit', handleLogin);
@@ -539,31 +507,27 @@
         return container;
     }
 
-    // PERBAIKAN 1: Memastikan fetch menggunakan metode JSON untuk melewati CORS Apps Script
     function handleLogin(e) {
         e.preventDefault();
         const userVal = document.getElementById('username').value;
         const passVal = document.getElementById('password').value;
-        showLoading('Memverifikasi...');
+        showLoading('Menghubungkan ke Server...');
 
-        if (IS_PREVIEW) {
-            setTimeout(() => {
-                const user = dummyUsers.find(u => u.username === userVal && u.password === passVal);
-                if (user) { currentUser = user; Swal.fire({ icon: 'success', title: 'Login Berhasil', timer: 1500, showConfirmButton: false }); setTimeout(renderApp, 1500); } 
-                else { Swal.fire({ icon: 'error', title: 'Gagal', text: 'Username atau Password salah!' }); }
-            }, 800);
-        } else {
-            fetch(GAS_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: 'login', username: userVal, password: passVal })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if(data.success) { currentUser = data.user; Swal.fire('Berhasil', '', 'success'); renderApp(); } 
-                else { Swal.fire('Gagal', data.message, 'error'); }
-            }).catch(err => Swal.fire('Error', 'Gagal server', 'error'));
-        }
+        fetch(GAS_URL, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'login', username: userVal, password: passVal })
+        })
+        .then(res => res.json())
+        .then(async data => {
+            if(data.success) { 
+                currentUser = data.user; 
+                Swal.fire({ title: 'Menyiapkan Data...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); }});
+                await syncDataFromServer(); // Tarik semua data (users, absen) dari Server saat berhasil login!
+                Swal.close();
+                renderApp(); 
+            } 
+            else { Swal.fire('Gagal Login', data.message, 'error'); }
+        }).catch(err => Swal.fire('Error Sistem', 'Gagal menghubungi database Google Sheets. Pastikan koneksi internet stabil.', 'error'));
     }
 
     function createDashboardView() {
@@ -623,8 +587,8 @@
 
         const main = document.createElement('div'); main.className = 'flex-1 flex flex-col h-screen overflow-hidden';
         const header = document.createElement('header'); header.className = 'bg-white shadow-sm h-16 flex items-center justify-between px-6 z-10';
-        let userInitials = currentUser.nama.charAt(0);
-        let userAvatar = currentUser.foto ? `<img src="${currentUser.foto}" class="w-full h-full object-cover">` : `<div class="w-full h-full bg-blue-600 flex items-center justify-center text-white font-bold shadow-sm">${userInitials}</div>`;
+        let userInitials = currentUser.nama ? currentUser.nama.charAt(0) : 'U';
+        let userAvatar = `<div class="w-full h-full bg-blue-600 flex items-center justify-center text-white font-bold shadow-sm">${userInitials}</div>`;
         
         header.innerHTML = `
             <div class="flex items-center"><button onclick="toggleSidebar()" class="md:hidden text-gray-500 hover:text-blue-600 focus:outline-none mr-4 transition"><i class="fas fa-bars text-xl"></i></button><h2 class="font-bold text-xl text-gray-800" id="header-title">Dashboard</h2></div>
@@ -862,14 +826,12 @@
             fieldsHtml = `<div class="mb-5"><label class="block text-xs font-bold text-slate-600 uppercase mb-2">Password Baru</label><input type="password" id="prof-password" placeholder="Ketik password baru..." class="w-full border-slate-300 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></div>`;
         } else if (role === 'Admin') {
             fieldsHtml = `<div class="mb-5"><label class="block text-xs font-bold text-slate-600 uppercase mb-2">Nama Tampilan</label><input type="text" id="prof-nama" value="${currentUser.nama}" class="w-full border-slate-300 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></div>
-                          <div class="mb-5"><label class="block text-xs font-bold text-slate-600 uppercase mb-2">Upload Avatar</label><input type="file" id="prof-foto" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:bg-blue-100 file:text-blue-700"></div>
                           <div class="mb-5"><label class="block text-xs font-bold text-slate-600 uppercase mb-2">Ubah Password</label><input type="password" id="prof-password" placeholder="Kosongkan jika tidak diubah" class="w-full border-slate-300 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></div>`;
         } else {
-            fieldsHtml = `<div class="mb-5"><label class="block text-xs font-bold text-slate-600 uppercase mb-2">Upload Foto Profil Baru</label><input type="file" id="prof-foto" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:bg-blue-100 file:text-blue-700"></div>
-                          <div class="mb-5"><label class="block text-xs font-bold text-slate-600 uppercase mb-2">Ubah Password</label><input type="password" id="prof-password" placeholder="Kosongkan jika tidak diubah" class="w-full border-slate-300 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></div>`;
+            fieldsHtml = `<div class="mb-5"><label class="block text-xs font-bold text-slate-600 uppercase mb-2">Ubah Password</label><input type="password" id="prof-password" placeholder="Kosongkan jika tidak diubah" class="w-full border-slate-300 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></div>`;
         }
 
-        let userAvatar = currentUser.foto ? currentUser.foto : `https://api.dicebear.com/9.x/micah/svg?seed=${currentUser.nama}`;
+        let userAvatar = `https://api.dicebear.com/9.x/micah/svg?seed=${currentUser.nama}`;
         return `
             <div class="max-w-2xl mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-100 mt-4 relative overflow-hidden">
                 <div class="absolute top-0 left-0 w-full h-24 bg-gradient-to-r from-blue-600 to-indigo-700"></div>
@@ -878,7 +840,7 @@
                     <h3 class="text-2xl font-black text-slate-800">${currentUser.nama}</h3>
                     <p class="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full mt-2 border border-blue-100">${currentUser.role}</p>
                 </div>
-                <form onsubmit="event.preventDefault(); simpanProfil();">${fieldsHtml}<button type="submit" class="w-full mt-4 bg-slate-800 hover:bg-slate-900 text-white font-bold py-3.5 rounded-xl shadow-md transition transform active:scale-95 text-sm uppercase"><i class="fas fa-check-circle mr-2"></i> Terapkan Perubahan</button></form>
+                <form onsubmit="event.preventDefault(); simpanProfil();">${fieldsHtml}<button type="submit" class="w-full mt-4 bg-slate-800 hover:bg-slate-900 text-white font-bold py-3.5 rounded-xl shadow-md transition transform active:scale-95 text-sm uppercase"><i class="fas fa-check-circle mr-2"></i> Simpan ke Database</button></form>
             </div>`;
     }
 
@@ -952,7 +914,7 @@
                     <div class="space-y-3 overflow-y-auto max-h-[500px] pr-2 flex-1 custom-scroll">
                         ${dummyLokasi.map(l => `
                             <div class="border border-slate-200 rounded-xl p-4 bg-slate-50 hover:bg-blue-50 transition border-l-4 border-l-blue-500 shadow-sm relative group">
-                                <h4 class="font-bold text-slate-800 text-lg">${l.nama}</h4>
+                                <h4 class="font-bold text-slate-800 text-lg">${l.nama || l.nama_lokasi}</h4>
                                 <div class="mt-2 space-y-1"><p class="text-xs font-mono text-slate-600 bg-white inline-block px-2 py-1 rounded border shadow-sm"><i class="fas fa-map-marker-alt text-rose-500 mr-1"></i> ${l.lat}, ${l.lon}</p><p class="text-xs font-bold text-blue-600 bg-white inline-block px-2 py-1 rounded border shadow-sm"><i class="fas fa-bullseye mr-1"></i> Radius: ${l.radius}m</p></div>
                                 <button onclick="deleteSingle('${l.id}', 'lokasi')" class="absolute top-4 right-4 text-slate-400 hover:text-rose-500 hover:bg-rose-50 p-2 rounded-lg transition" title="Hapus Lokasi"><i class="fas fa-trash-alt"></i></button>
                             </div>`).join('')}
@@ -1077,8 +1039,17 @@
 
         navigator.geolocation.getCurrentPosition(
             (pos) => {
-                const distance = calculateDistance(pos.coords.latitude, pos.coords.longitude, dummyLokasi[0].lat, dummyLokasi[0].lon);
-                if (IS_PREVIEW || distance <= dummyLokasi[0].radius) {
+                let distance = 0;
+                if(dummyLokasi.length > 0) {
+                     distance = calculateDistance(pos.coords.latitude, pos.coords.longitude, dummyLokasi[0].lat, dummyLokasi[0].lon);
+                }
+
+                // Tambahkan koordinat sembunyi ke UI agar bisa di-fetch
+                const tmpLat = document.createElement('input'); tmpLat.type = 'hidden'; tmpLat.id = 'scan-lat'; tmpLat.value = pos.coords.latitude;
+                const tmpLon = document.createElement('input'); tmpLon.type = 'hidden'; tmpLon.id = 'scan-lon'; tmpLon.value = pos.coords.longitude;
+                document.body.appendChild(tmpLat); document.body.appendChild(tmpLon);
+
+                if (dummyLokasi.length === 0 || distance <= dummyLokasi[0].radius) {
                     gpsStatus.innerHTML = '<i class="fas fa-check-circle mr-1"></i> GPS Valid'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-emerald-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
                     placeholder.innerHTML = `<i class="fas fa-camera text-5xl mb-4 text-slate-600"></i><p class="text-sm font-medium">Membuka Kamera...</p>`;
                     initCamera(video, placeholder, guide, btnIn, btnOut);
@@ -1090,7 +1061,6 @@
             (err) => {
                 gpsStatus.innerHTML = '<i class="fas fa-exclamation-triangle mr-1"></i> GPS Mati'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-rose-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
                 placeholder.innerHTML = `<i class="fas fa-location-arrow text-5xl mb-4 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Izin Lokasi (GPS) Ditolak.</p><p class="text-xs text-slate-500 mt-1">Sistem butuh GPS untuk mencegah kecurangan.</p>`;
-                if(IS_PREVIEW) initCamera(video, placeholder, guide, btnIn, btnOut); 
             }, { enableHighAccuracy: true }
         );
     }
@@ -1126,27 +1096,25 @@
         }, 2000);
     }
 
-    // PERBAIKAN 2: Memastikan fungsi scan juga mengirim data berupa JSON murni
     function saveAttendance(type, base64Image) {
         document.getElementById('scan-line-anim').classList.add('hidden'); document.getElementById('liveness-instruction').innerText = "Kamera Siap.";
         document.getElementById('btn-in').disabled = false; document.getElementById('btn-out').disabled = false;
 
-        if (IS_PREVIEW) {
-            Swal.fire({ icon: 'success', title: `Scan ${type} Berhasil!`, html: `<p class="text-slate-600 font-medium">Tercatat: ${new Date().toLocaleTimeString('id-ID')}</p><img src="${base64Image}" class="mt-4 rounded-xl mx-auto w-48 border-4 border-emerald-100 shadow-md">`, confirmButtonColor: '#10b981' });
-            if(type === 'IN') dummyAbsensi.unshift({ id: 'a2', id_user: currentUser.id, nama: currentUser.nama, kelas: currentUser.kelas, tanggal: new Date().toISOString().split('T')[0], waktu_in: new Date().toLocaleTimeString('id-ID'), waktu_out: '-', status: 'Hadir' });
-        } else {
-            showLoading(`Sinkronisasi...`);
-            let posLat = document.getElementById('lat') ? document.getElementById('lat').value : "0";
-            let posLon = document.getElementById('lon') ? document.getElementById('lon').value : "0";
+        showLoading(`Menyimpan ke Database...`);
+        let posLat = document.getElementById('scan-lat') ? document.getElementById('scan-lat').value : "0";
+        let posLon = document.getElementById('scan-lon') ? document.getElementById('scan-lon').value : "0";
 
-            fetch(GAS_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: 'scan', type: type, id_user: currentUser.id, image: base64Image, lat: posLat, lon: posLon })
-            })
-            .then(res => res.json()).then(data => { if(data.success) Swal.fire('Terkonfirmasi', `Absen ${type} sukses.`, 'success'); else Swal.fire('Ditolak', data.message, 'error'); })
-            .catch(err => Swal.fire('Error', 'Gagal koneksi database.', 'error'));
-        }
+        fetch(GAS_URL, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'scan', type: type, id_user: currentUser.id, image: base64Image, lat: posLat, lon: posLon })
+        })
+        .then(res => res.json()).then(data => { 
+            if(data.success) {
+                syncDataFromServer().then(() => {
+                    Swal.fire({ icon: 'success', title: `Scan ${type} Berhasil!`, html: `<p class="text-slate-600 font-medium">Tercatat di Server</p><img src="${base64Image}" class="mt-4 rounded-xl mx-auto w-48 border-4 border-emerald-100 shadow-md">`, confirmButtonColor: '#10b981' });
+                });
+            } else Swal.fire('Ditolak', data.message, 'error'); 
+        }).catch(err => Swal.fire('Error', 'Gagal koneksi database.', 'error'));
     }
 
     function renderSiswaIzin() {
