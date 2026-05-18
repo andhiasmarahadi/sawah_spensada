@@ -88,6 +88,66 @@
     let dummyPengaturan = { scan_in_start: '06:00', scan_in_end: '07:15', scan_out_start: '14:00', scan_out_end: '16:00' };
 
     // --- FUNGSI AKSI GLOBAL ---
+    
+    // FIX: Sistem Token Generator berbasis Waktu (Berubah setiap 60 detik)
+    window.getDynamicToken = function(offset = 0) {
+        const timeWindow = Math.floor(Date.now() / 60000) + offset;
+        let str = "SAWAH_SECURE_" + timeWindow;
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            hash = ((hash << 5) - hash) + str.charCodeAt(i);
+            hash |= 0;
+        }
+        return Math.abs(hash).toString().substring(0, 6).padStart(6, '0');
+    };
+
+    window.showTokenBypass = function() {
+        Swal.fire({
+            title: '<div class="mx-auto w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mb-2"><i class="fas fa-shield-alt text-indigo-600 text-3xl"></i></div>Otorisasi Guru',
+            html: '<p class="text-sm text-slate-500 mb-4">Minta <b>6-Digit Token</b> dari Guru/Wali Kelas Anda. Token ini otomatis hangus setiap 60 detik untuk mencegah kecurangan.</p>',
+            input: 'text',
+            inputAttributes: { maxlength: 6, pattern: '[0-9]*', inputmode: 'numeric' },
+            inputPlaceholder: 'Masukkan 6 angka token...',
+            showCancelButton: true,
+            confirmButtonText: 'Validasi Akses',
+            cancelButtonText: 'Batal',
+            confirmButtonColor: '#4f46e5',
+            customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl shadow-md', cancelButton: 'rounded-xl' },
+            inputValidator: (value) => { if (!value || value.length !== 6) return 'Masukkan 6 digit token yang valid!'; }
+        }).then((result) => {
+            if (result.isConfirmed) {
+                const val = result.value.trim();
+                // Toleransi waktu 1 menit mundur dan 1 menit maju (antisipasi jam HP berbeda)
+                if (val === getDynamicToken(0) || val === getDynamicToken(-1) || val === getDynamicToken(1)) {
+                    Swal.fire({icon: 'success', title: 'Akses Diberikan!', text: 'Sistem mengaktifkan mode manual...', timer: 1500, showConfirmButton: false});
+                    
+                    const video = document.getElementById('webcam');
+                    const placeholder = document.getElementById('camera-placeholder');
+                    const guide = document.getElementById('guide-frame');
+                    const btnIn = document.getElementById('btn-in');
+                    const btnOut = document.getElementById('btn-out');
+                    const gpsStatus = document.getElementById('gps-status');
+                    
+                    gpsStatus.innerHTML = '<i class="fas fa-unlock-alt mr-1"></i> Mode Guru';
+                    gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-indigo-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
+                    placeholder.innerHTML = `<i class="fas fa-camera text-5xl mb-4 text-slate-600"></i><p class="text-sm font-medium">Membuka Kamera...</p>`;
+                    
+                    let tmpLat = document.getElementById('scan-lat');
+                    if (!tmpLat) { tmpLat = document.createElement('input'); tmpLat.type = 'hidden'; tmpLat.id = 'scan-lat'; document.body.appendChild(tmpLat); }
+                    tmpLat.value = "BYPASS-GURU";
+
+                    let tmpLon = document.getElementById('scan-lon');
+                    if (!tmpLon) { tmpLon = document.createElement('input'); tmpLon.type = 'hidden'; tmpLon.id = 'scan-lon'; document.body.appendChild(tmpLon); }
+                    tmpLon.value = "BYPASS-GURU";
+
+                    initCamera(video, placeholder, guide, btnIn, btnOut);
+                } else {
+                    Swal.fire('Akses Ditolak', 'Token SALAH atau sudah KADALUARSA (Token berubah tiap menit).', 'error');
+                }
+            }
+        });
+    };
+
     window.deleteAllData = function(type) {
         Swal.fire({
             title: `Kosongkan Data ${type}?`,
@@ -452,7 +512,6 @@
         btnLogin.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Mengautentikasi...';
         btnLogin.disabled = true;
 
-        // Bantuan Login Preview
         if (IS_PREVIEW && userVal === 'admin' && passVal === 'edudigital') {
              currentUser = { id: 'U1', username: 'admin', role: 'Admin', nama: 'Administrator Dummy', kelas: '-', nisn: '-' };
              dummyLokasi = [{ id: 'l1', nama: 'Gerbang Utama SMPN 1', lat: -8.5361, lon: 115.4215, radius: 100 }];
@@ -461,7 +520,7 @@
         }
         if (IS_PREVIEW && userVal === 'peserta' && passVal === 'edudigital') {
              currentUser = { id: 'U2', username: 'peserta', role: 'Siswa', nama: 'Siswa Dummy', kelas: '7A', nisn: '12345', foto: '' };
-             dummyLokasi = [{ id: 'l1', nama: 'Dummy Lokasi Test', lat: -8.5361, lon: 115.4215, radius: 2000 }]; // Radius besar agar tidak gagal
+             dummyLokasi = [{ id: 'l1', nama: 'Dummy Lokasi Test', lat: -8.5361, lon: 115.4215, radius: 2000 }]; 
              Toast.fire({ icon: 'success', title: 'Login Siswa Preview' });
              renderApp(); return;
         }
@@ -558,7 +617,7 @@
         const content = document.createElement('main'); content.id = 'main-content'; content.className = 'flex-1 overflow-x-hidden overflow-y-auto bg-slate-50 p-6 custom-scroll';
         main.appendChild(header); main.appendChild(content); container.appendChild(sidebar); container.appendChild(main);
 
-        // FIX: Alur Redirect Pertama Kali Login (Bila Belum Punya Data Wajah)
+        // Alur Redirect Pertama Kali Login (Bila Belum Punya Data Wajah)
         setTimeout(() => { 
             if(currentUser.role === 'Siswa') {
                 if (!currentUser.foto || currentUser.foto.trim() === '') {
@@ -596,7 +655,20 @@
             case 'admin-dashboard':
                 headerTitle.innerText = currentUser.role === 'Wali' ? "Dashboard Wali Kelas " + currentUser.kelas : "Ringkasan Sistem Utama";
                 content.innerHTML = renderAdminDashboard();
-                activeInterval = setInterval(() => { const clock = document.getElementById('live-clock'); if(clock) clock.innerText = new Date().toLocaleTimeString('id-ID'); }, 1000);
+                activeInterval = setInterval(() => { 
+                    const clock = document.getElementById('live-clock'); 
+                    if(clock) clock.innerText = new Date().toLocaleTimeString('id-ID'); 
+                    
+                    // FIX: Animasi dan update Token Dinamis di Admin
+                    const tokenDisplay = document.getElementById('dynamic-token-display');
+                    const tokenProgress = document.getElementById('token-progress');
+                    if(tokenDisplay && tokenProgress) {
+                        tokenDisplay.innerText = getDynamicToken(0);
+                        const seconds = new Date().getSeconds();
+                        const progress = ((60 - seconds) / 60) * 100;
+                        tokenProgress.style.width = progress + '%';
+                    }
+                }, 1000);
                 break;
             case 'admin-users': headerTitle.innerText = currentUser.role === 'Admin' ? "Kelola Data Anggota" : (currentUser.role === 'Wali' ? "Data Siswa Kelas " + currentUser.kelas : "Direktori Seluruh Siswa"); content.innerHTML = renderAdminUsers(); break;
             case 'admin-absensi': headerTitle.innerText = "Data & Laporan Absensi"; content.innerHTML = renderAdminAbsensi(); break;
@@ -641,14 +713,21 @@
         const tglStr = new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
         return `
-            <div class="mb-6 flex flex-col md:flex-row justify-between md:items-center bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                <div class="mb-4 md:mb-0 flex items-center">
+            <div class="mb-6 flex flex-col xl:flex-row justify-between xl:items-center bg-white p-6 rounded-2xl shadow-sm border border-slate-100 gap-4">
+                <div class="flex items-center">
                     <div class="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xl mr-4"><i class="fas fa-school"></i></div>
                     <div><h3 class="text-2xl font-extrabold text-slate-800 tracking-tight">Dashboard ${titleSuffix}</h3><p class="text-sm text-slate-500 font-medium">${tglStr}</p></div>
                 </div>
-                <div class="bg-slate-800 text-white px-6 py-3 rounded-xl shadow-inner text-center border border-slate-700 min-w-[200px]">
-                    <div class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">Jam Server</div>
-                    <div id="live-clock" class="text-3xl font-mono font-bold text-blue-400 tracking-wider">--:--:--</div>
+                <div class="flex gap-3">
+                    <div class="bg-indigo-50 border border-indigo-200 px-5 py-3 rounded-xl shadow-inner text-center min-w-[140px] relative overflow-hidden" title="Berikan 6 digit ini pada siswa yang GPS-nya bermasalah.">
+                        <div class="text-[10px] font-bold text-indigo-500 uppercase tracking-wider mb-0.5"><i class="fas fa-shield-alt mr-1"></i>Token Akses GPS</div>
+                        <div id="dynamic-token-display" class="text-2xl font-black text-indigo-700 tracking-widest mt-1">------</div>
+                        <div class="absolute bottom-0 left-0 h-1.5 bg-indigo-500 transition-all duration-1000" id="token-progress" style="width: 100%"></div>
+                    </div>
+                    <div class="bg-slate-800 text-white px-6 py-3 rounded-xl shadow-inner text-center border border-slate-700 min-w-[140px]">
+                        <div class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">Jam Server</div>
+                        <div id="live-clock" class="text-xl font-mono font-bold text-blue-400 tracking-wider mt-1">--:--:--</div>
+                    </div>
                 </div>
             </div>
 
@@ -1006,7 +1085,7 @@
             </div>`;
     }
 
-    // FIX: Optimasi Deteksi GPS & Tombol Refresh Manual
+    // FIX: Optimasi Toleransi Radius Minimal 200m & Bypass Keamanan
     function startCameraAndGPS() {
         const video = document.getElementById('webcam'); if(!video) return; 
         const placeholder = document.getElementById('camera-placeholder'); const guide = document.getElementById('guide-frame');
@@ -1036,9 +1115,9 @@
                         let dist = calculateDistance(userLat, userLon, locLat, locLon);
                         if (dist < minDistance) minDistance = dist;
                         
-                        // Menambahkan Error Margin + Paksa toleransi minimal 100 meter agar HP tidak gagal terus
-                        let allowedRadius = locRad + accuracy + 15;
-                        if(allowedRadius < 100) allowedRadius = 100;
+                        // FIX PERMANEN: Memberikan buffer error HP + batas aman terkecil = 200 meter
+                        let allowedRadius = locRad + accuracy + 50;
+                        if(allowedRadius < 200) allowedRadius = 200;
 
                         if (dist <= allowedRadius) {
                             withinZone = true;
@@ -1047,9 +1126,13 @@
                     }
                 }
                 
-                const tmpLat = document.createElement('input'); tmpLat.type = 'hidden'; tmpLat.id = 'scan-lat'; tmpLat.value = userLat;
-                const tmpLon = document.createElement('input'); tmpLon.type = 'hidden'; tmpLon.id = 'scan-lon'; tmpLon.value = userLon;
-                document.body.appendChild(tmpLat); document.body.appendChild(tmpLon);
+                let tmpLat = document.getElementById('scan-lat');
+                if (!tmpLat) { tmpLat = document.createElement('input'); tmpLat.type = 'hidden'; tmpLat.id = 'scan-lat'; document.body.appendChild(tmpLat); }
+                tmpLat.value = userLat;
+
+                let tmpLon = document.getElementById('scan-lon');
+                if (!tmpLon) { tmpLon = document.createElement('input'); tmpLon.type = 'hidden'; tmpLon.id = 'scan-lon'; document.body.appendChild(tmpLon); }
+                tmpLon.value = userLon;
 
                 if (withinZone) {
                     gpsStatus.innerHTML = '<i class="fas fa-check-circle mr-1"></i> GPS Valid'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-emerald-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
@@ -1065,13 +1148,19 @@
                             <p class="text-[10px] text-slate-300 font-mono">Jarak Aktual: <span class="text-rose-400 font-bold">${minDistance !== Infinity ? Math.round(minDistance) : 0}m</span></p>
                             <p class="text-[10px] text-slate-300 font-mono">Akurasi HP: <span class="text-amber-400 font-bold">&plusmn; ${Math.round(accuracy)}m</span></p>
                         </div>
-                        <button onclick="startCameraAndGPS()" class="mt-3 bg-blue-600 hover:bg-blue-700 text-white text-xs px-4 py-2 rounded-full font-bold shadow-md transition"><i class="fas fa-sync-alt mr-1"></i> Refresh GPS</button>`;
+                        <div class="flex flex-col gap-2 mt-3 w-full max-w-[200px] mx-auto">
+                            <button onclick="startCameraAndGPS()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs px-4 py-2 rounded-lg font-bold transition"><i class="fas fa-sync-alt mr-1"></i> Coba Lagi GPS</button>
+                            <button onclick="showTokenBypass()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-2 rounded-lg font-bold shadow-md transition"><i class="fas fa-shield-alt mr-1"></i> Otorisasi Guru</button>
+                        </div>`;
                 }
             },
             (err) => {
                 gpsStatus.innerHTML = '<i class="fas fa-exclamation-triangle mr-1"></i> GPS Mati'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-rose-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
                 placeholder.innerHTML = `<i class="fas fa-location-arrow text-4xl mb-3 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Izin Lokasi Ditolak/Mati.</p><p class="text-xs text-slate-500 mt-1 mb-3">Aktifkan GPS HP Anda.</p>
-                <button onclick="startCameraAndGPS()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-4 py-2 rounded-full font-bold shadow-md transition"><i class="fas fa-sync-alt mr-1"></i> Coba Lagi</button>`;
+                <div class="flex flex-col gap-2 mt-3 w-full max-w-[200px] mx-auto">
+                    <button onclick="startCameraAndGPS()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs px-4 py-2 rounded-lg font-bold transition"><i class="fas fa-sync-alt mr-1"></i> Coba Lagi GPS</button>
+                    <button onclick="showTokenBypass()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-2 rounded-lg font-bold shadow-md transition"><i class="fas fa-shield-alt mr-1"></i> Otorisasi Guru</button>
+                </div>`;
             }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
         );
     }
@@ -1142,7 +1231,6 @@
             </div>`;
     }
 
-    // FIX: Tampilkan Foto Wajah jika sudah direkam
     function renderSiswaWajah() {
         if (currentUser.foto && currentUser.foto.trim() !== '') {
             return `
