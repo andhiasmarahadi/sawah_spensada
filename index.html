@@ -1122,8 +1122,8 @@
                     </div>
 
                     <div class="p-6 bg-white grid grid-cols-2 gap-4">
-                        <button onclick="processScan('IN')" id="btn-in" disabled class="opacity-50 cursor-not-allowed bg-emerald-500 text-white py-4 rounded-2xl shadow-md hover:bg-emerald-600 transition flex flex-col items-center justify-center group"><i class="fas fa-sign-in-alt text-2xl mb-1 group-hover:-translate-y-1 transition-transform"></i><span class="font-extrabold tracking-wide">SCAN IN</span></button>
-                        <button onclick="processScan('OUT')" id="btn-out" disabled class="opacity-50 cursor-not-allowed bg-rose-500 text-white py-4 rounded-2xl shadow-md hover:bg-rose-600 transition flex flex-col items-center justify-center group"><i class="fas fa-sign-out-alt text-2xl mb-1 group-hover:translate-x-1 transition-transform"></i><span class="font-extrabold tracking-wide">SCAN OUT</span></button>
+                        <button onclick="validateAndProcessScan('IN')" id="btn-in" disabled class="opacity-50 cursor-not-allowed bg-emerald-500 text-white py-4 rounded-2xl shadow-md hover:bg-emerald-600 transition flex flex-col items-center justify-center group"><i class="fas fa-sign-in-alt text-2xl mb-1 group-hover:-translate-y-1 transition-transform"></i><span class="font-extrabold tracking-wide">SCAN IN</span></button>
+                        <button onclick="validateAndProcessScan('OUT')" id="btn-out" disabled class="opacity-50 cursor-not-allowed bg-rose-500 text-white py-4 rounded-2xl shadow-md hover:bg-rose-600 transition flex flex-col items-center justify-center group"><i class="fas fa-sign-out-alt text-2xl mb-1 group-hover:translate-x-1 transition-transform"></i><span class="font-extrabold tracking-wide">SCAN OUT</span></button>
                     </div>
                 </div>
             </div>`;
@@ -1222,6 +1222,27 @@
                 placeholder.innerHTML = `<i class="fas fa-video-slash text-5xl mb-4 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Akses Kamera Depan Ditolak.</p>`; 
             });
     }
+
+    // FIX: Validasi Pengaturan Waktu Absensi
+    window.validateAndProcessScan = function(type) {
+        const now = new Date();
+        const currentTime = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+        
+        if (type === 'IN') {
+            if (currentTime < dummyPengaturan.scan_in_start || currentTime > dummyPengaturan.scan_in_end) {
+                Swal.fire({ icon: 'error', title: 'Waktu Tidak Valid', text: `Batas waktu SCAN MASUK adalah ${dummyPengaturan.scan_in_start} s/d ${dummyPengaturan.scan_in_end}. Waktu Anda saat ini: ${currentTime}` });
+                return;
+            }
+        } else if (type === 'OUT') {
+            if (currentTime < dummyPengaturan.scan_out_start || currentTime > dummyPengaturan.scan_out_end) {
+                Swal.fire({ icon: 'error', title: 'Waktu Tidak Valid', text: `Batas waktu SCAN PULANG adalah ${dummyPengaturan.scan_out_start} s/d ${dummyPengaturan.scan_out_end}. Waktu Anda saat ini: ${currentTime}` });
+                return;
+            }
+        }
+        
+        // Lanjut ke Face Recognition Asli jika waktu valid
+        processScan(type);
+    };
 
     // FIX: Integrasi Face Recognition Asli
     async function processScan(type) {
@@ -1432,21 +1453,30 @@
         return `
             <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 max-w-2xl mx-auto">
                 <div class="text-center mb-8"><div class="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-3xl mx-auto mb-4"><i class="fas fa-clock"></i></div><h3 class="text-2xl font-bold text-slate-800">Batas Waktu Operasional</h3></div>
-                <form onsubmit="event.preventDefault(); Swal.fire('Tersimpan', 'Jadwal operasional diperbarui', 'success');" class="space-y-6">
+                <form onsubmit="event.preventDefault(); simpanPengaturanWaktu();" class="space-y-6">
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div class="bg-emerald-50/50 p-5 rounded-xl border border-emerald-100 shadow-sm relative overflow-hidden"><div class="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div><h4 class="font-bold text-emerald-800 mb-4 flex items-center"><i class="fas fa-sign-in-alt mr-2 text-emerald-600"></i>Sesi Scan Masuk</h4>
-                            <div><label class="block text-xs font-bold text-slate-600 mb-1">Buka Absen</label><input type="time" class="w-full border-emerald-200 border rounded-lg p-2.5 font-mono" value="${dummyPengaturan.scan_in_start}"></div>
-                            <div class="mt-4"><label class="block text-xs font-bold text-slate-600 mb-1">Batas Terlambat</label><input type="time" class="w-full border-emerald-200 border rounded-lg p-2.5 font-mono" value="${dummyPengaturan.scan_in_end}"></div>
+                            <div><label class="block text-xs font-bold text-slate-600 mb-1">Buka Absen</label><input type="time" id="set-in-start" class="w-full border-emerald-200 border rounded-lg p-2.5 font-mono" value="${dummyPengaturan.scan_in_start}"></div>
+                            <div class="mt-4"><label class="block text-xs font-bold text-slate-600 mb-1">Batas Terlambat</label><input type="time" id="set-in-end" class="w-full border-emerald-200 border rounded-lg p-2.5 font-mono" value="${dummyPengaturan.scan_in_end}"></div>
                         </div>
                         <div class="bg-rose-50/50 p-5 rounded-xl border border-rose-100 shadow-sm relative overflow-hidden"><div class="absolute top-0 left-0 w-1 h-full bg-rose-500"></div><h4 class="font-bold text-rose-800 mb-4 flex items-center"><i class="fas fa-sign-out-alt mr-2 text-rose-600"></i>Sesi Scan Pulang</h4>
-                            <div><label class="block text-xs font-bold text-slate-600 mb-1">Buka Absen</label><input type="time" class="w-full border-rose-200 border rounded-lg p-2.5 font-mono" value="${dummyPengaturan.scan_out_start}"></div>
-                            <div class="mt-4"><label class="block text-xs font-bold text-slate-600 mb-1">Sistem Tutup</label><input type="time" class="w-full border-rose-200 border rounded-lg p-2.5 font-mono" value="${dummyPengaturan.scan_out_end}"></div>
+                            <div><label class="block text-xs font-bold text-slate-600 mb-1">Buka Absen</label><input type="time" id="set-out-start" class="w-full border-rose-200 border rounded-lg p-2.5 font-mono" value="${dummyPengaturan.scan_out_start}"></div>
+                            <div class="mt-4"><label class="block text-xs font-bold text-slate-600 mb-1">Sistem Tutup</label><input type="time" id="set-out-end" class="w-full border-rose-200 border rounded-lg p-2.5 font-mono" value="${dummyPengaturan.scan_out_end}"></div>
                         </div>
                     </div>
                     <button type="submit" class="bg-slate-800 text-white px-4 py-3.5 rounded-xl w-full hover:bg-slate-900 shadow-md font-bold text-lg transition"><i class="fas fa-save mr-2"></i> TERAPKAN JADWAL</button>
                 </form>
             </div>`;
     }
+
+    window.simpanPengaturanWaktu = function() {
+        dummyPengaturan.scan_in_start = document.getElementById('set-in-start').value;
+        dummyPengaturan.scan_in_end = document.getElementById('set-in-end').value;
+        dummyPengaturan.scan_out_start = document.getElementById('set-out-start').value;
+        dummyPengaturan.scan_out_end = document.getElementById('set-out-end').value;
+        
+        Swal.fire('Tersimpan', 'Jadwal operasional berhasil diperbarui untuk sesi ini.', 'success');
+    };
 
     function renderSiswaRiwayat() {
         const myAbsen = dummyAbsensi.filter(a => a.id_user === currentUser.id);
