@@ -33,6 +33,10 @@
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .sidebar-transition { transition: transform 0.3s ease-in-out; }
         
+        /* FIX BUG: Memastikan Pop Up Alert selalu di atas dan bisa diklik */
+        .swal2-container { z-index: 999999 !important; pointer-events: auto !important; }
+        .swal2-popup { pointer-events: auto !important; }
+        
         .scan-line {
             width: 100%; height: 4px; background: rgba(59, 130, 246, 0.8);
             position: absolute; top: 0; left: 0;
@@ -54,7 +58,7 @@
 
 <script>
     // ==========================================
-    // KEAMANAN APLIKASI (Anti Inspect & Klik Kanan)
+    // KEAMANAN APLIKASI
     // ==========================================
     document.addEventListener('contextmenu', event => event.preventDefault()); 
     document.addEventListener('keydown', function(e) {
@@ -66,26 +70,24 @@
     // ==========================================
     // KONFIGURASI APLIKASI
     // ==========================================
-    const IS_PREVIEW = false; // Mode Live Server!
+    const IS_PREVIEW = false; // Ganti ke false saat di-deploy ke Blogger
     
-    // WAJIB ISI DENGAN URL DEPLOYMENT GAS ANDA
+    // WAJIB ISI DENGAN URL DEPLOYMENT GAS TERBARU ANDA
     const GAS_URL = "https://script.google.com/macros/s/AKfycbxdrbeQHEZzy9XhLfKxI-iQtPGJKD99LFywzR06_OZ8mK-XuLyKt1mTqgR_l6T7WlP8Gw/exec"; 
     const APP_LOGO = "https://i.imghippo.com/files/Qvgj6380ctk.png";
 
-    // Notifikasi Super Cepat (Tanpa Blokir Layar)
     const Toast = Swal.mixin({
         toast: true, position: 'top-end', showConfirmButton: false,
         timer: 3000, timerProgressBar: true
     });
 
-    // Data Penampung 
     let dummyUsers = [];
     let dummyAbsensi = [];
     let dummyLokasi = [];
     let dummyIzin = [];
     let dummyPengaturan = { scan_in_start: '06:00', scan_in_end: '07:15', scan_out_start: '14:00', scan_out_end: '16:00' };
 
-    // --- FUNGSI AKSI GLOBAL (Speed Optimized) ---
+    // --- FUNGSI AKSI GLOBAL ---
     window.deleteAllData = function(type) {
         Swal.fire({
             title: `Kosongkan Data ${type}?`,
@@ -93,10 +95,11 @@
             icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', cancelButtonColor: '#94a3b8', confirmButtonText: 'Ya, Kosongkan!'
         }).then((result) => {
             if (result.isConfirmed) {
-                // Fetch tanpa pop up loading
+                Swal.fire({title: 'Menghapus...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); }});
                 fetch(GAS_URL, {
                     method: 'POST', body: JSON.stringify({ action: 'deleteAllData', type: type })
                 }).then(r => r.json()).then(res => {
+                    Swal.close();
                     if(res.success) {
                         if(type === 'anggota') dummyUsers = dummyUsers.filter(u => u.role !== 'Siswa');
                         else if(type === 'absensi') dummyAbsensi = [];
@@ -105,7 +108,7 @@
                         Toast.fire({ icon: 'success', title: 'Data berhasil dikosongkan!' });
                         changeView(type === 'anggota' ? 'admin-users' : (type === 'absensi' ? 'admin-absensi' : 'admin-lokasi'));
                     } else Swal.fire('Gagal', res.message, 'error');
-                });
+                }).catch(err => Swal.fire('Error', 'Koneksi terputus', 'error'));
             }
         });
     };
@@ -114,9 +117,11 @@
          Swal.fire({ title: 'Hapus Item Ini?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Hapus' }).then(res => {
              if(res.isConfirmed) {
                  let sheetName = type === 'user' ? 'Users' : 'Lokasi';
+                 Swal.fire({title: 'Memproses...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); }});
                  fetch(GAS_URL, {
                      method: 'POST', body: JSON.stringify({ action: 'deleteData', sheet: sheetName, id: id })
                  }).then(r => r.json()).then(response => {
+                     Swal.close();
                      if(response.success) {
                          if(type==='user') dummyUsers = dummyUsers.filter(u => u.id !== id);
                          else if(type==='lokasi') dummyLokasi = dummyLokasi.filter(l => l.id !== id);
@@ -136,7 +141,7 @@
     };
 
     window.mockAction = function(title) {
-        Swal.fire(title, 'Fungsi ini aktif dan siap memproses data.', 'info');
+        Swal.fire(title, 'Fitur sedang diproses dalam versi ini.', 'info');
     };
 
     // --- FUNGSI FILTERING ---
@@ -176,7 +181,7 @@
             title: '<div class="flex flex-col items-center"><div class="w-14 h-14 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-2 shadow-inner"><i class="fas fa-user-plus text-2xl"></i></div><span class="text-xl font-bold text-slate-800">Tambah Anggota</span></div>',
             html: `
                 <div class="text-left px-2 mt-4">
-                    <p class="text-xs text-slate-500 mb-4 text-center">Password default untuk akun baru adalah <b>123456</b>.</p>
+                    <p class="text-xs text-slate-500 mb-4 text-center">Password default akun baru: <b>123456</b></p>
                     <div class="mb-3">
                         <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-user-circle text-blue-500 mr-1"></i> Nama Lengkap</label>
                         <input id="swal-nama" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50" placeholder="Contoh: Budi Santoso" required>
@@ -197,7 +202,7 @@
                     </div>
                 </div>
             `,
-            focusConfirm: false, showCancelButton: true, confirmButtonText: '<i class="fas fa-save mr-1"></i> Simpan Data', cancelButtonText: 'Batal',
+            focusConfirm: false, showCancelButton: true, confirmButtonText: '<i class="fas fa-save mr-1"></i> Simpan', cancelButtonText: 'Batal',
             confirmButtonColor: '#2563eb', customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl', cancelButton: 'rounded-xl' },
             preConfirm: () => { return { nama: document.getElementById('swal-nama').value, nisn: document.getElementById('swal-nisn').value, role: document.getElementById('swal-role').value, kelas: document.getElementById('swal-kelas').value } }
         }).then((result) => {
@@ -205,16 +210,17 @@
                 let v = result.value;
                 if(!v.nama) return Swal.fire('Gagal', 'Nama wajib diisi!', 'error');
                 
-                // Fetch cepat di background, update UI instan
+                Swal.fire({title: 'Menyimpan...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); }});
                 fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ action: 'addUser', data: v }) })
                 .then(r => r.json()).then(res => {
+                    Swal.close();
                     if(res.success) {
                         v.id = res.newId; v.username = v.nisn; v.password = '123456';
-                        dummyUsers.unshift(v); // Update lokal tanpa reload database full
-                        Toast.fire({ icon: 'success', title: 'Anggota tersimpan di Database.' });
+                        dummyUsers.unshift(v); 
+                        Toast.fire({ icon: 'success', title: 'Tersimpan.' });
                         changeView('admin-users'); 
                     } else Swal.fire('Gagal', res.message, 'error');
-                });
+                }).catch(err => Swal.fire('Error', 'Gagal menyimpan.', 'error'));
             }
         });
     };
@@ -227,7 +233,7 @@
         if (user.role === 'Wali' || user.role === 'Siswa') {
             const klsList = ['7A','7B','7C','7D','7E','7F','7G', '8A','8B','8C','8D','8E','8F','8G', '9A','9B','9C','9D','9E','9F','9G'];
             let options = klsList.map(c => `<option value="${c}" ${user.kelas === c ? 'selected' : ''}>${c}</option>`).join('');
-            kelasHtml = `<div class="mb-3 text-left"><label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-chalkboard text-amber-500 mr-1"></i> Kelas ${user.role === 'Wali' ? '(Yang Diampu)' : ''}</label><select id="swal-edit-kelas" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50"><option value="-" ${user.kelas === '-' ? 'selected' : ''}>- Pilih Kelas -</option>${options}</select></div>`;
+            kelasHtml = `<div class="mb-3 text-left"><label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1"><i class="fas fa-chalkboard text-amber-500 mr-1"></i> Kelas</label><select id="swal-edit-kelas" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50"><option value="-" ${user.kelas === '-' ? 'selected' : ''}>- Pilih Kelas -</option>${options}</select></div>`;
         } else { kelasHtml = `<input type="hidden" id="swal-edit-kelas" value="${user.kelas}">`; }
         
         Swal.fire({
@@ -239,18 +245,19 @@
                     <div class="mb-3 text-left"><label class="block text-[11px] font-bold text-slate-500 uppercase mb-1">Password</label><input id="swal-edit-pass" class="w-full border-slate-200 border rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50" value="${user.password}"></div>
                     ${kelasHtml}
                 </div>`,
-            focusConfirm: false, showCancelButton: true, confirmButtonText: '<i class="fas fa-save mr-1"></i> Update Data', cancelButtonText: 'Batal',
+            focusConfirm: false, showCancelButton: true, confirmButtonText: '<i class="fas fa-save mr-1"></i> Update', cancelButtonText: 'Batal',
             confirmButtonColor: '#2563eb', customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl', cancelButton: 'rounded-xl' },
             preConfirm: () => { return { id: user.id, nama: document.getElementById('swal-edit-nama').value, nisn: document.getElementById('swal-edit-nisn').value, kelas: document.getElementById('swal-edit-kelas').value, password: document.getElementById('swal-edit-pass').value } }
         }).then((result) => {
             if(result.isConfirmed) {
+                Swal.fire({title: 'Memperbarui...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); }});
                 fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ action: 'updateUser', data: result.value }) })
                 .then(r => r.json()).then(res => {
+                    Swal.close();
                     if(res.success) {
-                        // Optimistic Local Update
                         user.nama = result.value.nama; user.nisn = result.value.nisn; user.username = result.value.nisn; user.kelas = result.value.kelas; user.password = result.value.password;
                         if(currentUser && currentUser.id === result.value.id) { currentUser.password = result.value.password; currentUser.nama = result.value.nama; }
-                        Toast.fire({ icon: 'success', title: 'Perubahan tersimpan.' });
+                        Toast.fire({ icon: 'success', title: 'Tersimpan.' });
                         changeView('admin-users');
                     } else Swal.fire('Gagal', res.message, 'error');
                 });
@@ -270,7 +277,7 @@
             html: `
                 <div class="text-center px-2 mt-2">
                     <div class="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner"><i class="fas fa-file-excel text-3xl text-emerald-600"></i></div>
-                    <p class="text-[13px] text-slate-500 mb-5 leading-relaxed">Unggah file Excel <b>(.xlsx)</b> yang telah diisi sesuai dengan template yang disediakan.</p>
+                    <p class="text-[13px] text-slate-500 mb-5 leading-relaxed">Unggah file Excel <b>(.xlsx)</b> yang diisi sesuai template.</p>
                     <div class="relative bg-white border-2 border-dashed border-emerald-300 rounded-xl p-6 hover:bg-emerald-50 transition cursor-pointer group overflow-hidden shadow-sm">
                         <input type="file" accept=".xlsx, .xls" id="file-import" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer z-10" 
                             onchange="let fn = this.files[0] ? this.files[0].name : 'Maksimal ukuran file: 5MB'; let el = document.getElementById('file-name-display'); el.innerText = fn; el.classList.add('text-emerald-600', 'font-bold'); el.classList.remove('text-slate-400');">
@@ -280,19 +287,17 @@
                     </div>
                 </div>
             `,
-            showCancelButton: true, confirmButtonText: '<i class="fas fa-upload mr-1"></i> Import Data', cancelButtonText: 'Batal', confirmButtonColor: '#10b981',
+            showCancelButton: true, confirmButtonText: '<i class="fas fa-upload mr-1"></i> Import', cancelButtonText: 'Batal', confirmButtonColor: '#10b981',
             preConfirm: () => { const fileInput = document.getElementById('file-import'); if (!fileInput.files.length) { Swal.showValidationMessage('Pilih file Excel!'); return false; } return fileInput.files[0]; }
         }).then((res) => {
             if(res.isConfirmed && res.value) {
                 const reader = new FileReader();
-                Swal.fire({ title: 'Membaca File...', didOpen: () => { Swal.showLoading(); } });
+                Swal.fire({ title: 'Membaca File...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
                 reader.onload = function(e) {
                     try {
                         const data = new Uint8Array(e.target.result);
                         const workbook = XLSX.read(data, {type: 'array'});
                         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-                        
-                        // Perbaikan Bug Excel: raw false agar 0 didepan NISN tidak hilang
                         const json = XLSX.utils.sheet_to_json(worksheet, {raw: false});
                         if(json.length === 0) return Swal.fire('Gagal', 'File Excel kosong.', 'error');
 
@@ -304,11 +309,10 @@
                         });
                         
                         if(newUsers.length > 0) {
-                            Swal.fire({ title: 'Menyimpan ke Server...', text: 'Memasukkan data ke database', didOpen: () => Swal.showLoading() });
+                            Swal.fire({ title: 'Menyimpan ke Server...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
                             fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ action: 'importUsers', users: newUsers }) })
                             .then(r => r.json()).then(resp => {
                                 if(resp.success) {
-                                    // Inject Array Lokal
                                     resp.imported.forEach(u => dummyUsers.unshift({ id: u[0], username: u[1], password: u[2], role: u[3], nama: u[4], kelas: u[5], nisn: u[6] }));
                                     Swal.fire({ icon: 'success', title: 'Berhasil!', text: `${newUsers.length} siswa diimport.`, timer: 2000, showConfirmButton: false });
                                     changeView('admin-users'); 
@@ -325,7 +329,7 @@
     window.simpanLokasiBaru = function() {
         let nama = document.getElementById('lokasi-nama').value;
         let lat = document.getElementById('lat').value; let lon = document.getElementById('lon').value; let radius = document.getElementById('radius').value;
-        if(!nama || !lat || !lon) return Swal.fire('Error', 'Lengkapi data koordinat.', 'error');
+        if(!nama || !lat || !lon) return Swal.fire('Error', 'Lengkapi data.', 'error');
         
         const btn = document.getElementById('btn-simpan-lokasi'); const oText = btn.innerHTML;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Menyimpan...'; btn.disabled = true;
@@ -334,7 +338,7 @@
         .then(r => r.json()).then(res => {
             if(res.success) {
                 dummyLokasi.push({ id: res.newId, nama: nama, lat: parseFloat(lat), lon: parseFloat(lon), radius: parseInt(radius) });
-                Toast.fire({ icon: 'success', title: 'Titik lokasi baru ditambahkan.' });
+                Toast.fire({ icon: 'success', title: 'Lokasi ditambahkan.' });
                 changeView('admin-lokasi');
             } else Swal.fire('Gagal', res.message, 'error');
         }).finally(() => { btn.innerHTML = oText; btn.disabled = false; });
@@ -355,7 +359,7 @@
             let file = elFoto.files[0];
             let reader = new FileReader();
             reader.onload = function(e) {
-                pData.foto = e.target.result; // Base64
+                pData.foto = e.target.result; 
                 sendUpdateServer(pData, true);
             };
             reader.readAsDataURL(file);
@@ -444,16 +448,20 @@
         const passVal = document.getElementById('password').value;
         const btnLogin = document.getElementById('btn-login');
         
-        // Animasi loading di tombol, hilangkan popup Swal
         const originalText = btnLogin.innerHTML;
         btnLogin.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Mengautentikasi...';
         btnLogin.disabled = true;
+
+        if (IS_PREVIEW && userVal === 'admin' && passVal === 'edudigital') {
+             currentUser = { id: 'U1', username: 'admin', role: 'Admin', nama: 'Administrator Dummy', kelas: '-', nisn: '-' };
+             Toast.fire({ icon: 'success', title: 'Login Mode Preview' });
+             renderApp(); return;
+        }
 
         fetch(GAS_URL, {
             method: 'POST', body: JSON.stringify({ action: 'login', username: userVal, password: passVal })
         }).then(res => res.json()).then(data => {
             if(data.success) { 
-                // Karena data master sudah ikut terkirim di dalam payload login, langsung set variabel!
                 currentUser = data.user; 
                 dummyUsers = data.appData.users || [];
                 dummyAbsensi = data.appData.absensi || [];
@@ -467,7 +475,7 @@
                 btnLogin.innerHTML = originalText; btnLogin.disabled = false;
             }
         }).catch(err => {
-            Swal.fire('Error Sistem', 'Gagal menghubungi database Google Sheets. Pastikan internet stabil.', 'error');
+            Swal.fire('Error Sistem', 'Gagal menghubungi database.', 'error');
             btnLogin.innerHTML = originalText; btnLogin.disabled = false;
         });
     }
@@ -528,7 +536,7 @@
         sidebar.innerHTML = menuItems + `<div class="p-4 border-t border-slate-800 bg-slate-950"><button onclick="logout()" class="w-full flex items-center justify-center p-3 bg-red-500/10 hover:bg-red-600 rounded-lg text-red-500 hover:text-white transition-all font-semibold text-sm border border-red-500/20"><i class="fas fa-sign-out-alt mr-2"></i> Keluar</button></div>`;
 
         const main = document.createElement('div'); main.className = 'flex-1 flex flex-col h-screen overflow-hidden';
-        const header = document.createElement('header'); header.className = 'bg-white shadow-sm h-16 flex items-center justify-between px-6 z-10';
+        const header = document.createElement('header'); header.className = 'bg-white shadow-sm h-16 flex items-center justify-between px-6 z-10 relative';
         let userInitials = currentUser.nama.charAt(0);
         let userAvatar = currentUser.foto ? `<img src="${currentUser.foto}" class="w-full h-full object-cover">` : `<div class="w-full h-full bg-blue-600 flex items-center justify-center text-white font-bold shadow-sm">${userInitials}</div>`;
         
@@ -767,7 +775,6 @@
         if (role === 'Siswa') {
             fieldsHtml = `<div class="mb-5"><label class="block text-xs font-bold text-slate-600 uppercase mb-2">Password Baru</label><input type="password" id="prof-password" placeholder="Ketik password baru..." class="w-full border-slate-300 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></div>`;
         } else {
-            // Admin, Kepala Sekolah, dan Wali Kelas semuanya mendapatkan fitur Upload Foto Profil
             fieldsHtml = `<div class="mb-5"><label class="block text-xs font-bold text-slate-600 uppercase mb-2">Nama Tampilan</label><input type="text" id="prof-nama" value="${currentUser.nama}" class="w-full border-slate-300 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></div>
                           <div class="mb-5"><label class="block text-xs font-bold text-slate-600 uppercase mb-2">Upload Foto Profil Baru</label><input type="file" id="prof-foto" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:bg-blue-100 file:text-blue-700"></div>
                           <div class="mb-5"><label class="block text-xs font-bold text-slate-600 uppercase mb-2">Ubah Password</label><input type="password" id="prof-password" placeholder="Kosongkan jika tidak diubah" class="w-full border-slate-300 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></div>`;
@@ -1045,7 +1052,6 @@
             method: 'POST', body: JSON.stringify({ action: 'scan', type: type, id_user: currentUser.id, image: base64Image, lat: posLat, lon: posLon })
         }).then(res => res.json()).then(res => { 
             if(res.success) {
-                // Optimistic Local update, tidak usah sync server
                 if(type === 'IN') { dummyAbsensi.unshift(res.data); } 
                 else if(type === 'OUT') { 
                     let exist = dummyAbsensi.find(a => a.id_user === currentUser.id && a.waktu_out === '-'); 
