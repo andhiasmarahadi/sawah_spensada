@@ -75,7 +75,7 @@
     const IS_PREVIEW = false; // Ganti ke false saat di-deploy ke Blogger
     
     // WAJIB ISI DENGAN URL DEPLOYMENT GAS TERBARU ANDA
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbxXDOSul2szRarGcWxmvVFQ_SYhcVsHZo_e6mtcqjo7fOzkUPFynW6fOuEdRq0DmgwUUA/exec"; 
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbwApi5TRqbqzWTjioRXH-mVn6xLdWYNufz8wZSwbx8TKNGEHrxWxAFFxRgwlFgIacd2Ig/exec"; 
     const APP_LOGO = "https://i.imghippo.com/files/Qvgj6380ctk.png";
 
     const Toast = Swal.mixin({
@@ -1223,29 +1223,61 @@
             });
     }
 
+    // FUNGSI BANTUAN WAKTU
+    function calcMinutesDiff(time1, time2) {
+        let t1 = time1.split(':'); let t2 = time2.split(':');
+        let d1 = new Date(2000, 0, 1, t1[0], t1[1]);
+        let d2 = new Date(2000, 0, 1, t2[0], t2[1]);
+        return Math.floor((d2 - d1) / 60000);
+    }
+
     // FIX: Validasi Pengaturan Waktu Absensi
     window.validateAndProcessScan = function(type) {
         const now = new Date();
         const currentTime = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-        
+        let lateMins = 0;
+        let earlyMins = 0;
+
         if (type === 'IN') {
-            if (currentTime < dummyPengaturan.scan_in_start || currentTime > dummyPengaturan.scan_in_end) {
-                Swal.fire({ icon: 'error', title: 'Waktu Tidak Valid', text: `Batas waktu SCAN MASUK adalah ${dummyPengaturan.scan_in_start} s/d ${dummyPengaturan.scan_in_end}. Waktu Anda saat ini: ${currentTime}` });
-                return;
+            if (currentTime < dummyPengaturan.scan_in_start) {
+                return Swal.fire({ icon: 'error', title: 'Belum Waktunya', text: `Sesi absen masuk baru dibuka pukul ${dummyPengaturan.scan_in_start}.` });
+            }
+            if (currentTime > dummyPengaturan.scan_in_end) {
+                return Swal.fire({
+                    title: 'Terlambat Absen',
+                    text: `Waktu scan masuk sudah lewat (Batas: ${dummyPengaturan.scan_in_end}). Tetap absen? (Kelebihan waktu akan masuk field Terlambat)`,
+                    icon: 'warning', showCancelButton: true, confirmButtonText: 'Ya, Tetap Absen', cancelButtonText: 'Batal', confirmButtonColor: '#f59e0b'
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        lateMins = calcMinutesDiff(dummyPengaturan.scan_in_end, currentTime);
+                        processScan(type, lateMins, 0);
+                    }
+                });
             }
         } else if (type === 'OUT') {
-            if (currentTime < dummyPengaturan.scan_out_start || currentTime > dummyPengaturan.scan_out_end) {
-                Swal.fire({ icon: 'error', title: 'Waktu Tidak Valid', text: `Batas waktu SCAN PULANG adalah ${dummyPengaturan.scan_out_start} s/d ${dummyPengaturan.scan_out_end}. Waktu Anda saat ini: ${currentTime}` });
-                return;
+            if (currentTime < dummyPengaturan.scan_out_start) {
+                return Swal.fire({
+                    title: 'Pulang Lebih Awal',
+                    text: `Belum waktunya pulang (Normal: ${dummyPengaturan.scan_out_start}). Tetap absen? (Akan tercatat Pulang Cepat)`,
+                    icon: 'warning', showCancelButton: true, confirmButtonText: 'Ya, Pulang Cepat', cancelButtonText: 'Batal', confirmButtonColor: '#f59e0b'
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        earlyMins = calcMinutesDiff(currentTime, dummyPengaturan.scan_out_start);
+                        processScan(type, 0, earlyMins);
+                    }
+                });
+            }
+            if (currentTime > dummyPengaturan.scan_out_end) {
+                return Swal.fire({ icon: 'error', title: 'Waktu Habis', text: `Sesi absen pulang telah ditutup pukul ${dummyPengaturan.scan_out_end}.` });
             }
         }
         
-        // Lanjut ke Face Recognition Asli jika waktu valid
-        processScan(type);
+        // Lanjut ke Face Recognition Asli jika waktu normal valid
+        processScan(type, 0, 0);
     };
 
     // FIX: Integrasi Face Recognition Asli
-    async function processScan(type) {
+    async function processScan(type, terlambatMins = 0, pulangCepatMins = 0) {
         const video = document.getElementById('webcam-face'); 
         const instruction = document.getElementById('liveness-instruction'); 
         const scanLine = document.getElementById('face-scan-line-anim');
@@ -1290,7 +1322,7 @@
                 canvas.width = video.videoWidth || 320; 
                 canvas.height = video.videoHeight || 240; 
                 canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-                saveAttendance(type, canvas.toDataURL('image/jpeg', 0.5));
+                saveAttendance(type, canvas.toDataURL('image/jpeg', 0.5), terlambatMins, pulangCepatMins);
             }, 800);
         } else {
             instruction.innerHTML = `<span class="text-rose-400 font-bold"><i class="fas fa-times-circle"></i> Wajah Tidak Cocok!</span>`;
@@ -1309,19 +1341,19 @@
         if(btnOut) btnOut.disabled = false;
     }
 
-    function saveAttendance(type, base64Image) {
+    function saveAttendance(type, base64Image, terlambat = 0, pulangCepat = 0) {
         document.getElementById('face-scan-line-anim').classList.add('hidden'); 
         document.getElementById('liveness-instruction').innerText = "Kamera Siap.";
         document.getElementById('btn-in').disabled = false; document.getElementById('btn-out').disabled = false;
 
         fetch(GAS_URL, {
-            method: 'POST', body: JSON.stringify({ action: 'scan', type: type, id_user: currentUser.id, image: base64Image, lat: "QR_VERIFIED", lon: "QR_VERIFIED" })
+            method: 'POST', body: JSON.stringify({ action: 'scan', type: type, id_user: currentUser.id, image: base64Image, lat: "QR_VERIFIED", lon: "QR_VERIFIED", terlambat: terlambat, pulang_cepat: pulangCepat })
         }).then(res => res.json()).then(res => { 
             if(res.success) {
                 if(type === 'IN') { dummyAbsensi.unshift(res.data); } 
                 else if(type === 'OUT') { 
                     let exist = dummyAbsensi.find(a => a.id_user === currentUser.id && a.waktu_out === '-'); 
-                    if(exist) exist.waktu_out = res.data.waktu_out;
+                    if(exist) { exist.waktu_out = res.data.waktu_out; exist.pulang_cepat = res.data.pulang_cepat; }
                 }
                 Swal.fire({ icon: 'success', title: `Scan ${type} Berhasil!`, html: `<p class="text-slate-600 font-medium">Tercatat di Server</p><img src="${base64Image}" class="mt-4 rounded-xl mx-auto w-48 border-4 border-emerald-100 shadow-md">`, confirmButtonColor: '#10b981' });
             } else Swal.fire('Ditolak', res.message, 'error'); 
