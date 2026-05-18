@@ -20,6 +20,13 @@
     <!-- SheetJS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
+    <!-- Face-API.js -->
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
     <!-- JSQR Scanner -->
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 
@@ -68,7 +75,7 @@
     const IS_PREVIEW = false; // Ganti ke false saat di-deploy ke Blogger
     
     // WAJIB ISI DENGAN URL DEPLOYMENT GAS TERBARU ANDA
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbxXDOSul2szRarGcWxmvVFQ_SYhcVsHZo_e6mtcqjo7fOzkUPFynW6fOuEdRq0DmgwUUA/exec"; 
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbxdrbeQHEZzy9XhLfKxI-iQtPGJKD99LFywzR06_OZ8mK-XuLyKt1mTqgR_l6T7WlP8Gw/exec"; 
     const APP_LOGO = "https://i.imghippo.com/files/Qvgj6380ctk.png";
 
     const Toast = Swal.mixin({
@@ -579,7 +586,7 @@
                 <nav class="flex-1 px-3 py-6 space-y-1">
                     <a href="#" onclick="changeView('admin-dashboard')" data-view="admin-dashboard" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-home w-6 group-hover:text-blue-400 transition"></i> Dashboard Kelas</a>
                     <a href="#" onclick="changeView('admin-users')" data-view="admin-users" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-users w-6 group-hover:text-blue-400 transition"></i> Data Siswa</a>
-                    <a href="#" onclick="changeView('laporan-absensi')" data-view="laporan-absensi" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-chart-bar w-6 group-hover:text-blue-400 transition"></i> Laporan Absensi</a>
+                    <a href="#" onclick="changeView('laporan-absensi')" data-view="laporan-absensi" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-chart-bar w-6 group-hover:text-blue-400 transition"></i> Laporan Absensi Kelas</a>
                     <a href="#" onclick="changeView('admin-qrcode')" data-view="admin-qrcode" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-qrcode w-6 group-hover:text-blue-400 transition"></i> QR Code Absen</a>
                     <a href="#" onclick="changeView('wali-izin')" data-view="wali-izin" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-envelope-open-text w-6 group-hover:text-blue-400 transition"></i> Persetujuan Izin</a>
                     <div class="my-2 border-t border-slate-700"></div>
@@ -677,8 +684,14 @@
             case 'wali-izin': headerTitle.innerText = "Validasi Izin Kelas " + currentUser.kelas; content.innerHTML = renderAdminIzin(); break;
             case 'admin-waktu': headerTitle.innerText = "Pengaturan Jam Operasional"; content.innerHTML = renderAdminWaktu(); break;
             case 'siswa-scan': 
+                // PERLINDUNGAN: Wajib merekam wajah pertama kali sebelum bisa buka menu Scan Absensi
+                if (currentUser.role === 'Siswa' && (!currentUser.foto || currentUser.foto.trim() === '')) {
+                    Swal.fire({ icon: 'warning', title: 'Akses Terkunci', text: 'Anda belum memiliki data pola wajah. Silakan lakukan Perekaman Wajah terlebih dahulu.'});
+                    changeView('siswa-wajah');
+                    return; 
+                }
                 headerTitle.innerText = "Pindai Wajah Kehadiran"; 
-                isQrVerified = false; // Reset status QR setiap masuk menu ini
+                isQrVerified = false; 
                 content.innerHTML = renderSiswaScan(); 
                 break;
             case 'siswa-wajah': 
