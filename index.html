@@ -20,7 +20,7 @@
     <!-- SheetJS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-    <!-- Face-API.js -->
+    <!-- Face-API.js (Mesin Kecerdasan Buatan) -->
     <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 
     <!-- Leaflet CSS & JS -->
@@ -76,7 +76,6 @@
     
     // WAJIB ISI DENGAN URL DEPLOYMENT GAS TERBARU ANDA
     const GAS_URL = "https://script.google.com/macros/s/AKfycbxXDOSul2szRarGcWxmvVFQ_SYhcVsHZo_e6mtcqjo7fOzkUPFynW6fOuEdRq0DmgwUUA/exec"; 
-    
     const APP_LOGO = "https://i.imghippo.com/files/Qvgj6380ctk.png";
 
     const Toast = Swal.mixin({
@@ -91,6 +90,53 @@
 
     let currentActiveView = '';
     let dataPollingInterval;
+
+    // ==========================================
+    // MESIN AI: FACE RECOGNITION (FACE-API.JS)
+    // ==========================================
+    let isFaceApiLoaded = false;
+    let registeredDescriptor = null;
+
+    async function loadFaceApiModels() {
+        if (isFaceApiLoaded) return true;
+        try {
+            // Memuat file kecerdasan buatan dari CDN stabil JSDelivr
+            const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
+            await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+            await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+            await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+            isFaceApiLoaded = true;
+            console.log("Model AI Wajah Berhasil Dimuat.");
+            return true;
+        } catch (e) {
+            console.error("Gagal memuat model face-api:", e);
+            return false;
+        }
+    }
+
+    // Fungsi mengambil pola geometrik wajah dari foto profil siswa (Database)
+    async function getRegisteredDescriptor() {
+        if (registeredDescriptor) return registeredDescriptor;
+        if (!currentUser.foto || currentUser.foto.trim() === '') return null;
+        
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.crossOrigin = "Anonymous"; 
+            img.onload = async () => {
+                try {
+                    const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+                    if (detection) {
+                        registeredDescriptor = detection.descriptor;
+                        resolve(registeredDescriptor);
+                    } else {
+                        resolve(null);
+                    }
+                } catch(err) { resolve(null); }
+            };
+            img.onerror = () => resolve(null);
+            img.src = currentUser.foto;
+        });
+    }
 
     // --- FUNGSI AUTO REFRESH (REAL TIME) ---
     function startDataPolling() {
@@ -538,6 +584,10 @@
         if (IS_PREVIEW && userVal === 'peserta' && passVal === 'edudigital') {
              currentUser = { id: 'U2', username: 'peserta', role: 'Siswa', nama: 'Siswa Dummy', kelas: '7A', nisn: '12345', foto: '' };
              Toast.fire({ icon: 'success', title: 'Login Siswa Preview' });
+             
+             // PRELOAD AI MODEL BACKGROUND
+             loadFaceApiModels();
+
              startDataPolling(); renderApp(); return;
         }
 
@@ -551,6 +601,10 @@
                 dummyIzin = data.appData.izin || [];
                 
                 Toast.fire({ icon: 'success', title: 'Akses Diterima!' });
+
+                // PRELOAD AI MODEL JIKA SISWA
+                if(currentUser.role === 'Siswa') loadFaceApiModels();
+
                 startDataPolling(); renderApp(); 
             } else { 
                 Swal.fire('Gagal', data.message, 'error'); 
@@ -1084,8 +1138,6 @@
             .then((s) => {
                 streamQR = s; 
                 video.srcObject = streamQR; 
-                
-                // Mencegah video blank pada beberapa HP
                 video.onloadedmetadata = () => { video.play(); };
                 
                 video.classList.remove('hidden'); 
@@ -1155,8 +1207,6 @@
             .then((s) => {
                 streamFace = s; 
                 video.srcObject = streamFace; 
-                
-                // Mencegah video blank pada beberapa HP
                 video.onloadedmetadata = () => { video.play(); };
 
                 video.classList.remove('hidden'); 
@@ -1173,26 +1223,69 @@
             });
     }
 
-    function processScan(type) {
+    // FIX: Integrasi Face Recognition Asli
+    async function processScan(type) {
         const video = document.getElementById('webcam-face'); 
         const instruction = document.getElementById('liveness-instruction'); 
         const scanLine = document.getElementById('face-scan-line-anim');
-        const challenges = ["Silakan Tersenyum", "Toleh Ke Kiri Sedikit", "Kedipkan Mata Anda"];
-        const randomChallenge = challenges[Math.floor(Math.random() * challenges.length)];
+        const btnIn = document.getElementById('btn-in');
+        const btnOut = document.getElementById('btn-out');
         
-        scanLine.classList.remove('hidden'); instruction.innerHTML = `<span class="text-amber-300 animate-pulse">${randomChallenge}</span>`;
-        document.getElementById('btn-in').disabled = true; document.getElementById('btn-out').disabled = true;
+        btnIn.disabled = true; btnOut.disabled = true;
+        scanLine.classList.remove('hidden'); 
+        instruction.innerHTML = `<span class="text-amber-300 animate-pulse"><i class="fas fa-spinner fa-spin mr-1"></i> Menganalisa Wajah...</span>`;
 
-        setTimeout(() => {
-            instruction.innerHTML = `<span class="text-emerald-400"><i class="fas fa-check-circle"></i> Wajah Terverifikasi Asli</span>`;
-            const canvas = document.createElement('canvas'); 
+        // 1. Pastikan Model AI sudah dimuat
+        let loaded = await loadFaceApiModels();
+        if(!loaded) {
+            Swal.fire('Error', 'Gagal memuat sistem AI wajah. Pastikan koneksi internet stabil.', 'error');
+            resetScanUI(); return;
+        }
+
+        // 2. Ambil referensi wajah dari foto profil siswa (Database)
+        let savedDesc = await getRegisteredDescriptor();
+        if(!savedDesc) {
+            Swal.fire('Error', 'Data wajah Anda tidak valid atau kosong. Harap lapor Admin.', 'error');
+            resetScanUI(); return;
+        }
+
+        // 3. Deteksi Wajah di Kamera Live saat ini
+        const liveDetection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+        
+        if(!liveDetection) {
+            instruction.innerHTML = `<span class="text-rose-400 font-bold"><i class="fas fa-exclamation-triangle"></i> Wajah Tidak Terdeteksi!</span>`;
+            setTimeout(resetScanUI, 2500);
+            return;
+        }
+
+        // 4. Bandingkan Wajah Kamera vs Wajah Database (Batas Toleransi: 0.55)
+        const distance = faceapi.euclideanDistance(savedDesc, liveDetection.descriptor);
+        
+        if(distance < 0.55) { 
+            instruction.innerHTML = `<span class="text-emerald-400 font-bold"><i class="fas fa-check-circle"></i> Wajah Cocok! (${((1-distance)*100).toFixed(0)}%)</span>`;
             
-            // Dinamis sesuai ukuran kamera HP
-            canvas.width = video.videoWidth || 320; 
-            canvas.height = video.videoHeight || 240; 
-            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-            saveAttendance(type, canvas.toDataURL('image/jpeg', 0.5));
-        }, 2000);
+            setTimeout(() => {
+                const canvas = document.createElement('canvas'); 
+                canvas.width = video.videoWidth || 320; 
+                canvas.height = video.videoHeight || 240; 
+                canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+                saveAttendance(type, canvas.toDataURL('image/jpeg', 0.5));
+            }, 800);
+        } else {
+            instruction.innerHTML = `<span class="text-rose-400 font-bold"><i class="fas fa-times-circle"></i> Wajah Tidak Cocok!</span>`;
+            setTimeout(resetScanUI, 2500);
+        }
+    }
+
+    function resetScanUI() {
+        const scanLine = document.getElementById('face-scan-line-anim');
+        const instruction = document.getElementById('liveness-instruction');
+        const btnIn = document.getElementById('btn-in');
+        const btnOut = document.getElementById('btn-out');
+        if(scanLine) scanLine.classList.add('hidden');
+        if(instruction) instruction.innerText = "Kamera Siap, Silakan Tekan Tombol.";
+        if(btnIn) btnIn.disabled = false;
+        if(btnOut) btnOut.disabled = false;
     }
 
     function saveAttendance(type, base64Image) {
@@ -1242,7 +1335,6 @@
         }
     }
 
-    // FIX: Alokasi variabel kamera secara spesifik agar tidak terganggu saat transisi
     window.initKameraRegistrasi = function() {
         const video = document.getElementById('webcam-reg');
         const placeholder = document.getElementById('reg-placeholder');
@@ -1251,9 +1343,8 @@
         
         navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
         .then((s) => {
-            streamFace = s; // Simpan di variabel global streamFace
+            streamFace = s; 
             video.srcObject = streamFace; 
-            
             video.onloadedmetadata = () => { video.play(); };
 
             video.classList.remove('hidden'); 
@@ -1265,28 +1356,43 @@
         });
     }
 
-    // FIX: Bypass khusus mode dummy agar perekaman tidak error 
-    window.simpanWajahBaru = function() {
+    // FIX: Registrasi kini wajib mendeteksi bahwa ada 'Wajah' di kamera
+    window.simpanWajahBaru = async function() {
         const video = document.getElementById('webcam-reg');
         const btn = document.getElementById('btn-reg-wajah');
         if(!video) return;
 
         const originalBtn = btn.innerHTML;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Menyimpan ke Server...';
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Menganalisa Wajah...';
         btn.disabled = true;
 
+        let loaded = await loadFaceApiModels();
+        if(!loaded) {
+            Swal.fire('Error', 'Sistem AI gagal dimuat. Cek koneksi.', 'error');
+            btn.innerHTML = originalBtn; btn.disabled = false;
+            return;
+        }
+
+        const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions());
+        if(!detection) {
+            Swal.fire('Gagal', 'Wajah tidak terdeteksi! Posisikan wajah Anda tepat di depan kamera dengan pencahayaan terang.', 'warning');
+            btn.innerHTML = originalBtn; btn.disabled = false;
+            return;
+        }
+
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Menyimpan...';
         const canvas = document.createElement('canvas'); 
         canvas.width = video.videoWidth || 320; 
         canvas.height = video.videoHeight || 240; 
         canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
         const fotoBase64 = canvas.toDataURL('image/jpeg', 0.8);
+        
+        registeredDescriptor = null; // reset cache
 
-        // Bypass jika testing menggunakan akun Dummy 'peserta'
+        // Bypass testing dummy
         if (IS_PREVIEW && currentUser.id === 'U2') {
             currentUser.foto = fotoBase64;
-            Swal.fire({ icon: 'success', title: 'Berhasil!', text: 'Wajah berhasil tersimpan di sistem (Mode Preview).' }).then(() => {
-                changeView('siswa-scan'); 
-            });
+            Swal.fire({ icon: 'success', title: 'Berhasil!', text: 'Wajah berhasil tersimpan (Mode Preview).' }).then(() => changeView('siswa-scan'));
             return;
         }
 
