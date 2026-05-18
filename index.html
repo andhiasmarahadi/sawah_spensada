@@ -75,7 +75,8 @@
     const IS_PREVIEW = false; // Ganti ke false saat di-deploy ke Blogger
     
     // WAJIB ISI DENGAN URL DEPLOYMENT GAS TERBARU ANDA
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbxdrbeQHEZzy9XhLfKxI-iQtPGJKD99LFywzR06_OZ8mK-XuLyKt1mTqgR_l6T7WlP8Gw/exec"; 
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbxXDOSul2szRarGcWxmvVFQ_SYhcVsHZo_e6mtcqjo7fOzkUPFynW6fOuEdRq0DmgwUUA/exec"; 
+    
     const APP_LOGO = "https://i.imghippo.com/files/Qvgj6380ctk.png";
 
     const Toast = Swal.mixin({
@@ -684,7 +685,7 @@
             case 'wali-izin': headerTitle.innerText = "Validasi Izin Kelas " + currentUser.kelas; content.innerHTML = renderAdminIzin(); break;
             case 'admin-waktu': headerTitle.innerText = "Pengaturan Jam Operasional"; content.innerHTML = renderAdminWaktu(); break;
             case 'siswa-scan': 
-                // PERLINDUNGAN: Wajib merekam wajah pertama kali sebelum bisa buka menu Scan Absensi
+                // PERLINDUNGAN MAKSIMAL: Blokir menu absen jika belum rekam wajah
                 if (currentUser.role === 'Siswa' && (!currentUser.foto || currentUser.foto.trim() === '')) {
                     Swal.fire({ icon: 'warning', title: 'Akses Terkunci', text: 'Anda belum memiliki data pola wajah. Silakan lakukan Perekaman Wajah terlebih dahulu.'});
                     changeView('siswa-wajah');
@@ -884,7 +885,7 @@
             </div>`;
     }
 
-    // --- RENDER QR CODE ADMIN (PENGGANTI LOKASI GPS) ---
+    // --- RENDER QR CODE ADMIN ---
     function renderAdminQRCode() {
         const d = new Date();
         const todayStr = String(d.getDate()).padStart(2, '0') + String(d.getMonth()+1).padStart(2, '0') + d.getFullYear();
@@ -1083,6 +1084,10 @@
             .then((s) => {
                 streamQR = s; 
                 video.srcObject = streamQR; 
+                
+                // Mencegah video blank pada beberapa HP
+                video.onloadedmetadata = () => { video.play(); };
+                
                 video.classList.remove('hidden'); 
                 placeholder.classList.add('hidden'); 
                 document.getElementById('qr-scan-line-anim').classList.remove('hidden');
@@ -1108,27 +1113,25 @@
             qrContext.drawImage(video, 0, 0, qrCanvas.width, qrCanvas.height);
             let imageData = qrContext.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
             
-            // Core Logic Deteksi QR via Library
             let code = jsQR(imageData.data, imageData.width, imageData.height, {inversionAttempts: "dontInvert"});
             
             if(code) {
                 const d = new Date();
                 const todayStr = String(d.getDate()).padStart(2, '0') + String(d.getMonth()+1).padStart(2, '0') + d.getFullYear();
                 
-                // Mencegah QR Code kemarin di-scan hari ini
                 if(code.data === "SAWAH_QR_" + todayStr) {
                     isQrVerified = true;
                     document.getElementById('gps-status').innerHTML = '<i class="fas fa-check-circle mr-1"></i> QR Valid';
                     document.getElementById('gps-status').className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-emerald-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
                     
                     Swal.fire({icon: 'success', title: 'Akses Diberikan!', text: 'Membuka kamera depan untuk deteksi wajah...', timer: 1500, showConfirmButton: false});
-                    stopMediaTracks(streamQR); // Matikan kamera belakang
+                    stopMediaTracks(streamQR); 
                     
                     setTimeout(() => {
                         document.getElementById('qr-container').classList.add('hidden');
                         document.getElementById('face-container').classList.remove('hidden');
                         document.getElementById('scan-subtitle').innerText = "Langkah 2: Verifikasi Wajah";
-                        startFaceScanner(); // Buka kamera depan
+                        startFaceScanner(); 
                     }, 500);
                     return; 
                 } else {
@@ -1137,7 +1140,7 @@
                 }
             }
         }
-        qrScannerLoop = requestAnimationFrame(tickQR); // Looping per frame
+        qrScannerLoop = requestAnimationFrame(tickQR); 
     }
 
     function startFaceScanner() {
@@ -1152,6 +1155,10 @@
             .then((s) => {
                 streamFace = s; 
                 video.srcObject = streamFace; 
+                
+                // Mencegah video blank pada beberapa HP
+                video.onloadedmetadata = () => { video.play(); };
+
                 video.classList.remove('hidden'); 
                 placeholder.classList.add('hidden'); 
                 guide.classList.remove('hidden');
@@ -1178,7 +1185,11 @@
 
         setTimeout(() => {
             instruction.innerHTML = `<span class="text-emerald-400"><i class="fas fa-check-circle"></i> Wajah Terverifikasi Asli</span>`;
-            const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 240; 
+            const canvas = document.createElement('canvas'); 
+            
+            // Dinamis sesuai ukuran kamera HP
+            canvas.width = video.videoWidth || 320; 
+            canvas.height = video.videoHeight || 240; 
             canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
             saveAttendance(type, canvas.toDataURL('image/jpeg', 0.5));
         }, 2000);
@@ -1201,6 +1212,114 @@
                 Swal.fire({ icon: 'success', title: `Scan ${type} Berhasil!`, html: `<p class="text-slate-600 font-medium">Tercatat di Server</p><img src="${base64Image}" class="mt-4 rounded-xl mx-auto w-48 border-4 border-emerald-100 shadow-md">`, confirmButtonColor: '#10b981' });
             } else Swal.fire('Ditolak', res.message, 'error'); 
         });
+    }
+
+    function renderSiswaWajah() {
+        if (currentUser.foto && currentUser.foto.trim() !== '') {
+            return `
+            <div class="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-100 text-center">
+                <div class="relative w-32 h-32 mx-auto mb-5">
+                    <div class="w-full h-full rounded-full overflow-hidden border-4 border-emerald-100 shadow-lg bg-slate-100">
+                        <img src="${currentUser.foto}" class="w-full h-full object-cover" alt="Foto Wajah">
+                    </div>
+                    <div class="absolute bottom-1 right-1 bg-emerald-500 text-white w-8 h-8 rounded-full flex items-center justify-center border-2 border-white shadow-sm"><i class="fas fa-check text-sm"></i></div>
+                </div>
+                <h3 class="text-2xl font-bold text-slate-800 mb-2">Wajah Terekam</h3>
+                <p class="text-slate-500 text-sm mb-8 leading-relaxed">Pola data geometrik wajah Anda telah tersimpan dan terenkripsi di server pusat.</p>
+                <button onclick="changeView('siswa-scan')" class="bg-blue-600 hover:bg-blue-700 text-white py-3 w-full rounded-xl font-bold shadow-md transition active:scale-95">Lanjut ke Scanner Kehadiran</button>
+            </div>`;
+        } else {
+            return `
+            <div class="max-w-md mx-auto bg-white p-6 rounded-2xl shadow-sm border border-slate-100 text-center">
+                <h3 class="text-xl font-bold text-slate-800 mb-2">Registrasi Wajah Baru</h3>
+                <p class="text-slate-500 text-xs mb-4">Harap rekam wajah Anda sebagai referensi database absensi (Wajib dilakukan pertama kali).</p>
+                <div class="relative bg-slate-900 h-64 rounded-xl overflow-hidden mb-4 flex items-center justify-center">
+                    <video id="webcam-reg" autoplay playsinline class="w-full h-full object-cover hidden"></video>
+                    <div id="reg-placeholder" class="text-slate-400"><i class="fas fa-camera text-4xl mb-2"></i><p class="text-sm">Membuka kamera...</p></div>
+                </div>
+                <button onclick="simpanWajahBaru()" id="btn-reg-wajah" disabled class="bg-blue-600 text-white py-3.5 w-full rounded-xl font-bold opacity-50 cursor-not-allowed shadow-md flex justify-center items-center"><i class="fas fa-save mr-2"></i> REKAM & SIMPAN WAJAH</button>
+            </div>`;
+        }
+    }
+
+    // FIX: Alokasi variabel kamera secara spesifik agar tidak terganggu saat transisi
+    window.initKameraRegistrasi = function() {
+        const video = document.getElementById('webcam-reg');
+        const placeholder = document.getElementById('reg-placeholder');
+        const btn = document.getElementById('btn-reg-wajah');
+        if(!video) return;
+        
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
+        .then((s) => {
+            streamFace = s; // Simpan di variabel global streamFace
+            video.srcObject = streamFace; 
+            
+            video.onloadedmetadata = () => { video.play(); };
+
+            video.classList.remove('hidden'); 
+            placeholder.classList.add('hidden');
+            
+            btn.disabled = false; btn.classList.remove('opacity-50', 'cursor-not-allowed'); btn.classList.add('hover:bg-blue-700', 'active:scale-95', 'transition');
+        }).catch((err) => { 
+            placeholder.innerHTML = `<i class="fas fa-video-slash text-4xl mb-2 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Kamera Ditolak.</p>`; 
+        });
+    }
+
+    // FIX: Bypass khusus mode dummy agar perekaman tidak error 
+    window.simpanWajahBaru = function() {
+        const video = document.getElementById('webcam-reg');
+        const btn = document.getElementById('btn-reg-wajah');
+        if(!video) return;
+
+        const originalBtn = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Menyimpan ke Server...';
+        btn.disabled = true;
+
+        const canvas = document.createElement('canvas'); 
+        canvas.width = video.videoWidth || 320; 
+        canvas.height = video.videoHeight || 240; 
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        const fotoBase64 = canvas.toDataURL('image/jpeg', 0.8);
+
+        // Bypass jika testing menggunakan akun Dummy 'peserta'
+        if (IS_PREVIEW && currentUser.id === 'U2') {
+            currentUser.foto = fotoBase64;
+            Swal.fire({ icon: 'success', title: 'Berhasil!', text: 'Wajah berhasil tersimpan di sistem (Mode Preview).' }).then(() => {
+                changeView('siswa-scan'); 
+            });
+            return;
+        }
+
+        fetch(GAS_URL, {
+            method: 'POST', body: JSON.stringify({ action: 'updateUser', data: { id: currentUser.id, foto: fotoBase64 } })
+        }).then(r => r.json()).then(res => {
+            if(res.success) {
+                currentUser.foto = fotoBase64;
+                Swal.fire({ icon: 'success', title: 'Berhasil!', text: 'Wajah Anda berhasil tersimpan di sistem.' }).then(() => {
+                    changeView('siswa-scan'); 
+                });
+            } else {
+                Swal.fire('Gagal', res.message, 'error');
+                btn.innerHTML = originalBtn; btn.disabled = false;
+            }
+        }).catch(err => {
+            Swal.fire('Error', 'Gagal menghubungi server.', 'error');
+            btn.innerHTML = originalBtn; btn.disabled = false;
+        });
+    }
+
+    function renderSiswaIzin() {
+        return `
+            <div class="max-w-xl mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
+                <h3 class="text-xl font-bold text-slate-800 mb-6 flex items-center"><i class="fas fa-file-medical text-blue-500 mr-2"></i> Lapor Ketidakhadiran</h3>
+                <form id="izin-form" onsubmit="event.preventDefault(); submitIzin();" class="space-y-5">
+                    <div><label class="block text-sm font-bold text-slate-700 mb-1">Kategori</label><select id="izin-kategori" class="w-full border border-slate-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none"><option>Sakit (Perlu Surat)</option><option>Izin Kepentingan</option></select></div>
+                    <div class="grid grid-cols-2 gap-4"><div><label class="block text-sm font-bold text-slate-700 mb-1">Dari</label><input type="date" id="izin-dari" required class="w-full border border-slate-300 rounded-xl p-3 outline-none"></div><div><label class="block text-sm font-bold text-slate-700 mb-1">Sampai</label><input type="date" id="izin-sampai" required class="w-full border border-slate-300 rounded-xl p-3 outline-none"></div></div>
+                    <div><label class="block text-sm font-bold text-slate-700 mb-1">Alasan</label><textarea id="izin-alasan" required rows="3" class="w-full border border-slate-300 rounded-xl p-3 outline-none" placeholder="Jelaskan singkat..."></textarea></div>
+                    <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 border-dashed"><label class="block text-sm font-bold text-slate-700 mb-2">Upload Lampiran (Max 2MB)</label><input type="file" id="izin-file" accept="image/*,application/pdf" required class="w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:bg-blue-100 file:text-blue-700 cursor-pointer"></div>
+                    <button type="submit" id="btn-kirim-izin" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-md hover:bg-blue-700 transition active:scale-95"><i class="fas fa-paper-plane mr-2"></i> Kirim Pengajuan</button>
+                </form>
+            </div>`;
     }
 
     function renderAdminWaktu() {
