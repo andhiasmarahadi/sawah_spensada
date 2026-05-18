@@ -1006,24 +1006,40 @@
 
         navigator.geolocation.getCurrentPosition(
             (pos) => {
-                // Konversi koma ke titik, dan mutlak dikonversi ke Float (Angka)
-                const locLat = dummyLokasi.length > 0 ? parseFloat(String(dummyLokasi[0].lat).replace(',', '.')) : 0;
-                const locLon = dummyLokasi.length > 0 ? parseFloat(String(dummyLokasi[0].lon).replace(',', '.')) : 0;
-                const locRad = dummyLokasi.length > 0 ? parseFloat(String(dummyLokasi[0].radius)) : 0;
+                let withinZone = false;
+                let minDistance = Infinity;
 
-                const distance = dummyLokasi.length > 0 ? calculateDistance(pos.coords.latitude, pos.coords.longitude, locLat, locLon) : 0;
+                // Cek ke SELURUH titik lokasi yang didaftarkan Admin, bukan hanya indeks [0]
+                if (dummyLokasi.length === 0) {
+                    withinZone = true;
+                } else {
+                    for (let i = 0; i < dummyLokasi.length; i++) {
+                        let locLat = parseFloat(String(dummyLokasi[i].lat).replace(',', '.'));
+                        let locLon = parseFloat(String(dummyLokasi[i].lon).replace(',', '.'));
+                        let locRad = parseFloat(String(dummyLokasi[i].radius));
+                        if(isNaN(locRad)) locRad = 50;
+
+                        let dist = calculateDistance(pos.coords.latitude, pos.coords.longitude, locLat, locLon);
+                        if (dist < minDistance) minDistance = dist;
+                        
+                        if (dist <= locRad) {
+                            withinZone = true;
+                            break; // Jika ada 1 titik yang valid, langsung izinkan
+                        }
+                    }
+                }
                 
                 const tmpLat = document.createElement('input'); tmpLat.type = 'hidden'; tmpLat.id = 'scan-lat'; tmpLat.value = pos.coords.latitude;
                 const tmpLon = document.createElement('input'); tmpLon.type = 'hidden'; tmpLon.id = 'scan-lon'; tmpLon.value = pos.coords.longitude;
                 document.body.appendChild(tmpLat); document.body.appendChild(tmpLon);
 
-                if (dummyLokasi.length === 0 || distance <= locRad) {
+                if (withinZone) {
                     gpsStatus.innerHTML = '<i class="fas fa-check-circle mr-1"></i> GPS Valid'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-emerald-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
                     placeholder.innerHTML = `<i class="fas fa-camera text-5xl mb-4 text-slate-600"></i><p class="text-sm font-medium">Membuka Kamera...</p>`;
                     initCamera(video, placeholder, guide, btnIn, btnOut);
                 } else {
                     gpsStatus.innerHTML = '<i class="fas fa-times-circle mr-1"></i> Luar Zona'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-rose-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
-                    placeholder.innerHTML = `<i class="fas fa-map-marked-alt text-5xl mb-4 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Terdeteksi di Luar Area Sekolah.</p><p class="text-xs text-slate-500 mt-1">Jarak Anda: ${Math.round(distance)} meter dari titik acuan.</p>`;
+                    placeholder.innerHTML = `<i class="fas fa-map-marked-alt text-5xl mb-4 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Terdeteksi di Luar Area Sekolah.</p><p class="text-xs text-slate-500 mt-1">Jarak Anda: ${minDistance !== Infinity ? Math.round(minDistance) : 0} meter dari titik terdekat.</p>`;
                 }
             },
             (err) => {
