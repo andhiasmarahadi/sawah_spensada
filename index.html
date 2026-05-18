@@ -1006,18 +1006,23 @@
             </div>`;
     }
 
-    // FIX: Penambahan Akurasi HP Sensor GPS bawaan ke Toleransi Radius
+    // FIX: Optimasi Deteksi GPS & Tombol Refresh Manual
     function startCameraAndGPS() {
         const video = document.getElementById('webcam'); if(!video) return; 
         const placeholder = document.getElementById('camera-placeholder'); const guide = document.getElementById('guide-frame');
         const btnIn = document.getElementById('btn-in'); const btnOut = document.getElementById('btn-out'); const gpsStatus = document.getElementById('gps-status');
 
+        placeholder.innerHTML = `<i class="fas fa-compass text-5xl mb-4 text-slate-600 animate-spin-slow"></i><p class="text-sm font-medium">Memverifikasi lokasi GPS...</p>`;
+        gpsStatus.innerHTML = '<i class="fas fa-satellite-dish animate-pulse mr-1"></i> Mencari GPS';
+        gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-amber-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
+
         navigator.geolocation.getCurrentPosition(
             (pos) => {
                 let withinZone = false;
                 let minDistance = Infinity;
-                // Menangkap akurasi spesifik HP (biasanya jelek jika indoor)
                 let accuracy = pos.coords.accuracy || 0; 
+                let userLat = pos.coords.latitude;
+                let userLon = pos.coords.longitude;
 
                 if (dummyLokasi.length === 0) {
                     withinZone = true;
@@ -1028,19 +1033,22 @@
                         let locRad = parseFloat(String(dummyLokasi[i].radius));
                         if(isNaN(locRad)) locRad = 50;
 
-                        let dist = calculateDistance(pos.coords.latitude, pos.coords.longitude, locLat, locLon);
+                        let dist = calculateDistance(userLat, userLon, locLat, locLon);
                         if (dist < minDistance) minDistance = dist;
                         
-                        // Menambahkan Error Margin (15 meter) + Akurasi Alat ke perhitungan radius
-                        if (dist <= (locRad + accuracy + 15)) {
+                        // Menambahkan Error Margin + Paksa toleransi minimal 100 meter agar HP tidak gagal terus
+                        let allowedRadius = locRad + accuracy + 15;
+                        if(allowedRadius < 100) allowedRadius = 100;
+
+                        if (dist <= allowedRadius) {
                             withinZone = true;
                             break; 
                         }
                     }
                 }
                 
-                const tmpLat = document.createElement('input'); tmpLat.type = 'hidden'; tmpLat.id = 'scan-lat'; tmpLat.value = pos.coords.latitude;
-                const tmpLon = document.createElement('input'); tmpLon.type = 'hidden'; tmpLon.id = 'scan-lon'; tmpLon.value = pos.coords.longitude;
+                const tmpLat = document.createElement('input'); tmpLat.type = 'hidden'; tmpLat.id = 'scan-lat'; tmpLat.value = userLat;
+                const tmpLon = document.createElement('input'); tmpLon.type = 'hidden'; tmpLon.id = 'scan-lon'; tmpLon.value = userLon;
                 document.body.appendChild(tmpLat); document.body.appendChild(tmpLon);
 
                 if (withinZone) {
@@ -1049,19 +1057,22 @@
                     initCamera(video, placeholder, guide, btnIn, btnOut);
                 } else {
                     gpsStatus.innerHTML = '<i class="fas fa-times-circle mr-1"></i> Luar Zona'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-rose-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
-                    // Menampilkan jarak persis dan toleransi error di layar 
-                    placeholder.innerHTML = `<i class="fas fa-map-marked-alt text-5xl mb-4 text-rose-500"></i>
-                        <p class="text-sm font-bold text-rose-500">Terdeteksi di Luar Area.</p>
-                        <div class="mt-3 bg-slate-800 p-2 rounded text-left inline-block shadow-inner">
-                            <p class="text-[11px] text-slate-300 font-mono">Jarak Aktual: <span class="text-rose-400 font-bold">${minDistance !== Infinity ? Math.round(minDistance) : 0} meter</span></p>
-                            <p class="text-[11px] text-slate-300 font-mono">Error GPS HP: <span class="text-amber-400 font-bold">&plusmn; ${Math.round(accuracy)} meter</span></p>
-                        </div>`;
+                    
+                    placeholder.innerHTML = `<i class="fas fa-map-marked-alt text-5xl mb-2 text-rose-500"></i>
+                        <p class="text-sm font-bold text-rose-500">Luar Area Sekolah.</p>
+                        <div class="mt-2 bg-slate-800 p-2 rounded text-left inline-block shadow-inner w-full max-w-[200px]">
+                            <p class="text-[10px] text-slate-300 font-mono truncate">HP: ${userLat.toFixed(5)}, ${userLon.toFixed(5)}</p>
+                            <p class="text-[10px] text-slate-300 font-mono">Jarak Aktual: <span class="text-rose-400 font-bold">${minDistance !== Infinity ? Math.round(minDistance) : 0}m</span></p>
+                            <p class="text-[10px] text-slate-300 font-mono">Akurasi HP: <span class="text-amber-400 font-bold">&plusmn; ${Math.round(accuracy)}m</span></p>
+                        </div>
+                        <button onclick="startCameraAndGPS()" class="mt-3 bg-blue-600 hover:bg-blue-700 text-white text-xs px-4 py-2 rounded-full font-bold shadow-md transition"><i class="fas fa-sync-alt mr-1"></i> Refresh GPS</button>`;
                 }
             },
             (err) => {
                 gpsStatus.innerHTML = '<i class="fas fa-exclamation-triangle mr-1"></i> GPS Mati'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-rose-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
-                placeholder.innerHTML = `<i class="fas fa-location-arrow text-5xl mb-4 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Izin Lokasi (GPS) Ditolak.</p><p class="text-xs text-slate-500 mt-1">Sistem butuh GPS untuk mencegah kecurangan.</p>`;
-            }, { enableHighAccuracy: true }
+                placeholder.innerHTML = `<i class="fas fa-location-arrow text-4xl mb-3 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Izin Lokasi Ditolak/Mati.</p><p class="text-xs text-slate-500 mt-1 mb-3">Aktifkan GPS HP Anda.</p>
+                <button onclick="startCameraAndGPS()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-4 py-2 rounded-full font-bold shadow-md transition"><i class="fas fa-sync-alt mr-1"></i> Coba Lagi</button>`;
+            }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
         );
     }
 
