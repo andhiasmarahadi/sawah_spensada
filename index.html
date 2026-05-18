@@ -20,7 +20,7 @@
     <!-- SheetJS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-    <!-- Face-API.js (Mesin Kecerdasan Buatan) -->
+    <!-- Face-API.js -->
     <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 
     <!-- Leaflet CSS & JS -->
@@ -100,7 +100,6 @@
     async function loadFaceApiModels() {
         if (isFaceApiLoaded) return true;
         try {
-            // Memuat file kecerdasan buatan dari CDN stabil JSDelivr
             const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
             await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
             await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
@@ -114,7 +113,6 @@
         }
     }
 
-    // Fungsi mengambil pola geometrik wajah dari foto profil siswa (Database)
     async function getRegisteredDescriptor() {
         if (registeredDescriptor) return registeredDescriptor;
         if (!currentUser.foto || currentUser.foto.trim() === '') return null;
@@ -156,9 +154,12 @@
         }, 15000); 
     }
 
+    // FIX: Memastikan Statistik Admin dan Riwayat Siswa disegarkan secara realtime
     function refreshCurrentViewSoftly() {
         if (currentActiveView === 'admin-absensi' || currentActiveView === 'laporan-absensi') updateTableAbsensi();
         else if (currentActiveView === 'admin-izin' || currentActiveView === 'wali-izin') updateTableIzin();
+        else if (currentActiveView === 'admin-dashboard') loadView('admin-dashboard'); 
+        else if (currentActiveView === 'siswa-riwayat') loadView('siswa-riwayat');
     }
 
     window.manualRefreshData = function() {
@@ -584,10 +585,7 @@
         if (IS_PREVIEW && userVal === 'peserta' && passVal === 'edudigital') {
              currentUser = { id: 'U2', username: 'peserta', role: 'Siswa', nama: 'Siswa Dummy', kelas: '7A', nisn: '12345', foto: '' };
              Toast.fire({ icon: 'success', title: 'Login Siswa Preview' });
-             
-             // PRELOAD AI MODEL BACKGROUND
              loadFaceApiModels();
-
              startDataPolling(); renderApp(); return;
         }
 
@@ -601,8 +599,6 @@
                 dummyIzin = data.appData.izin || [];
                 
                 Toast.fire({ icon: 'success', title: 'Akses Diterima!' });
-
-                // PRELOAD AI MODEL JIKA SISWA
                 if(currentUser.role === 'Siswa') loadFaceApiModels();
 
                 startDataPolling(); renderApp(); 
@@ -715,7 +711,6 @@
         const content = document.getElementById('main-content');
         const headerTitle = document.getElementById('header-title');
         
-        // Membersihkan Memory Kamera saat pindah Menu
         stopMediaTracks(streamQR); streamQR = null;
         stopMediaTracks(streamFace); streamFace = null;
         if(qrScannerLoop) cancelAnimationFrame(qrScannerLoop); qrScannerLoop = null;
@@ -739,7 +734,6 @@
             case 'wali-izin': headerTitle.innerText = "Validasi Izin Kelas " + currentUser.kelas; content.innerHTML = renderAdminIzin(); break;
             case 'admin-waktu': headerTitle.innerText = "Pengaturan Jam Operasional"; content.innerHTML = renderAdminWaktu(); break;
             case 'siswa-scan': 
-                // PERLINDUNGAN MAKSIMAL: Blokir menu absen jika belum rekam wajah
                 if (currentUser.role === 'Siswa' && (!currentUser.foto || currentUser.foto.trim() === '')) {
                     Swal.fire({ icon: 'warning', title: 'Akses Terkunci', text: 'Anda belum memiliki data pola wajah. Silakan lakukan Perekaman Wajah terlebih dahulu.'});
                     changeView('siswa-wajah');
@@ -783,6 +777,35 @@
         const absenHariIni = myAbsen.filter(a => a.tanggal === today).length;
         const tglStr = new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
+        // FIX: Perhitungan Statistik Dasbor Berdasarkan Data Server Realtime
+        let totalAbsen = myAbsen.length || 1;
+        let countTepat = myAbsen.filter(a => a.status === 'Hadir' && (!a.terlambat || parseInt(a.terlambat) === 0)).length;
+        let countTelat = myAbsen.filter(a => parseInt(a.terlambat) > 0).length;
+        let countIzinTotal = myIzin.filter(i => i.status === 'Disetujui').length;
+        
+        let pctTepat = Math.round((countTepat / totalAbsen) * 100) || 0;
+        let pctTelat = Math.round((countTelat / totalAbsen) * 100) || 0;
+        let pctIzin = Math.round((countIzinTotal / totalAbsen) * 100) || 0;
+        let pctAlpha = Math.max(0, 100 - pctTepat - pctTelat - pctIzin);
+
+        // FIX: Kalkulasi Peringkat Siswa Kedisiplinan Realtime
+        let stats = {};
+        mySiswa.forEach(s => { stats[s.id] = { nama: s.nama, kelas: s.kelas, hadir: 0, telat: 0 }; });
+        myAbsen.forEach(a => {
+            if(stats[a.id_user]) {
+                if(a.status === 'Hadir') stats[a.id_user].hadir++;
+                if(parseInt(a.terlambat) > 0) stats[a.id_user].telat++;
+            }
+        });
+
+        let bestScore = -1; let bestSiswa = {nama: '-', kelas: '-', val: '0 Hadir'};
+        let worstTelat = -1; let worstSiswa = {nama: 'Belum Ada', kelas: '-', val: '0x Telat'};
+
+        Object.values(stats).forEach(s => {
+            if(s.hadir > bestScore) { bestScore = s.hadir; bestSiswa = {nama: s.nama, kelas: s.kelas, val: s.hadir + ' Hadir'}; }
+            if(s.telat > worstTelat && s.telat > 0) { worstTelat = s.telat; worstSiswa = {nama: s.nama, kelas: s.kelas, val: s.telat + 'x Telat'}; }
+        });
+
         return `
             <div class="mb-6 flex flex-col xl:flex-row justify-between xl:items-center bg-white p-6 rounded-2xl shadow-sm border border-slate-100 gap-4">
                 <div class="flex items-center">
@@ -813,7 +836,8 @@
                     </div>
                 </div>
                 
-                <div onclick="changeView('${currentUser.role === 'Admin' || currentUser.role === 'Wali' ? 'admin-qrcode' : 'admin-dashboard'})" class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 cursor-pointer hover:-translate-y-1 hover:shadow-lg transform transition-all duration-300 relative overflow-hidden group">
+                <!-- FIX: Perbaikan tombol langsung arahkan ke menu QR jika yang login adalah Admin/Wali -->
+                <div onclick="if(currentUser.role === 'Admin' || currentUser.role === 'Wali') { changeView('admin-qrcode'); }" class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 ${currentUser.role === 'Admin' || currentUser.role === 'Wali' ? 'cursor-pointer hover:-translate-y-1 hover:shadow-lg' : ''} transform transition-all duration-300 relative overflow-hidden group">
                     <div class="absolute top-0 left-0 w-1 h-full bg-amber-500"></div>
                     <div class="flex justify-between items-start">
                         <div><p class="text-sm font-semibold text-slate-500 mb-1 group-hover:text-amber-600 transition-colors">Sistem Keamanan</p><h3 class="text-2xl font-black text-slate-800 mt-2">QR AKTIF</h3></div>
@@ -835,20 +859,20 @@
                     <h4 class="font-bold text-slate-800 mb-4"><i class="fas fa-chart-bar text-blue-500 mr-2"></i>Statistik Kehadiran ${titleSuffix}</h4>
                     <div class="space-y-4">
                         <div>
-                            <div class="flex justify-between text-xs font-bold text-slate-600 mb-1"><span>Hadir Tepat Waktu</span><span>85%</span></div>
-                            <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden"><div class="bg-emerald-500 h-2.5 rounded-full" style="width: 85%"></div></div>
+                            <div class="flex justify-between text-xs font-bold text-slate-600 mb-1"><span>Hadir Tepat Waktu</span><span>${pctTepat}%</span></div>
+                            <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden"><div class="bg-emerald-500 h-2.5 rounded-full" style="width: ${pctTepat}%"></div></div>
                         </div>
                         <div>
-                            <div class="flex justify-between text-xs font-bold text-slate-600 mb-1"><span>Terlambat</span><span>8%</span></div>
-                            <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden"><div class="bg-amber-500 h-2.5 rounded-full" style="width: 8%"></div></div>
+                            <div class="flex justify-between text-xs font-bold text-slate-600 mb-1"><span>Terlambat</span><span>${pctTelat}%</span></div>
+                            <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden"><div class="bg-amber-500 h-2.5 rounded-full" style="width: ${pctTelat}%"></div></div>
                         </div>
                         <div>
-                            <div class="flex justify-between text-xs font-bold text-slate-600 mb-1"><span>Izin / Sakit</span><span>5%</span></div>
-                            <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden"><div class="bg-blue-500 h-2.5 rounded-full" style="width: 5%"></div></div>
+                            <div class="flex justify-between text-xs font-bold text-slate-600 mb-1"><span>Izin / Sakit</span><span>${pctIzin}%</span></div>
+                            <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden"><div class="bg-blue-500 h-2.5 rounded-full" style="width: ${pctIzin}%"></div></div>
                         </div>
                         <div>
-                            <div class="flex justify-between text-xs font-bold text-slate-600 mb-1"><span>Alpha (Tanpa Keterangan)</span><span>2%</span></div>
-                            <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden"><div class="bg-rose-500 h-2.5 rounded-full" style="width: 2%"></div></div>
+                            <div class="flex justify-between text-xs font-bold text-slate-600 mb-1"><span>Alpha (Tanpa Keterangan)</span><span>${pctAlpha}%</span></div>
+                            <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden"><div class="bg-rose-500 h-2.5 rounded-full" style="width: ${pctAlpha}%"></div></div>
                         </div>
                     </div>
                 </div>
@@ -858,16 +882,16 @@
                     <div class="flex items-center justify-between p-3.5 bg-emerald-50 rounded-xl border border-emerald-100 mb-3 hover:shadow-md transition">
                         <div class="flex items-center">
                             <div class="w-10 h-10 rounded-full bg-emerald-200 text-emerald-700 flex items-center justify-center font-bold mr-3"><i class="fas fa-star"></i></div>
-                            <div><p class="text-[10px] text-emerald-600 font-bold uppercase tracking-wider">Siswa Paling Rajin</p><p class="text-sm font-bold text-slate-800">Siswa Teladan (7A)</p></div>
+                            <div><p class="text-[10px] text-emerald-600 font-bold uppercase tracking-wider">Siswa Paling Rajin</p><p class="text-sm font-bold text-slate-800">${bestSiswa.nama} (${bestSiswa.kelas})</p></div>
                         </div>
-                        <div class="text-xs font-bold text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-md shadow-sm border border-emerald-200">100% Hadir</div>
+                        <div class="text-xs font-bold text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-md shadow-sm border border-emerald-200">${bestSiswa.val}</div>
                     </div>
                     <div class="flex items-center justify-between p-3.5 bg-rose-50 rounded-xl border border-rose-100 hover:shadow-md transition">
                         <div class="flex items-center">
                             <div class="w-10 h-10 rounded-full bg-rose-200 text-rose-700 flex items-center justify-center font-bold mr-3"><i class="fas fa-exclamation-triangle"></i></div>
-                            <div><p class="text-[10px] text-rose-600 font-bold uppercase tracking-wider">Sering Terlambat</p><p class="text-sm font-bold text-slate-800">Siswa Simulasi 4 (8A)</p></div>
+                            <div><p class="text-[10px] text-rose-600 font-bold uppercase tracking-wider">Sering Terlambat</p><p class="text-sm font-bold text-slate-800">${worstSiswa.nama} (${worstSiswa.kelas})</p></div>
                         </div>
-                        <div class="text-xs font-bold text-rose-700 bg-rose-100 px-2.5 py-1 rounded-md shadow-sm border border-rose-200">5x Telat</div>
+                        <div class="text-xs font-bold text-rose-700 bg-rose-100 px-2.5 py-1 rounded-md shadow-sm border border-rose-200">${worstSiswa.val}</div>
                     </div>
                 </div>
             </div>
@@ -939,7 +963,6 @@
             </div>`;
     }
 
-    // --- RENDER QR CODE ADMIN ---
     function renderAdminQRCode() {
         const d = new Date();
         const todayStr = String(d.getDate()).padStart(2, '0') + String(d.getMonth()+1).padStart(2, '0') + d.getFullYear();
@@ -1005,12 +1028,15 @@
             <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
                 <div class="flex justify-between items-center mb-4">
                     <h3 class="text-lg font-bold text-slate-800">Tabel Rekam Absensi</h3>
-                    <div class="space-x-2"><button onclick="mockAction('Cetak PDF')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg shadow-sm text-sm font-semibold"><i class="fas fa-print mr-1"></i> Cetak</button><button onclick="deleteAllData('absensi')" class="bg-rose-500 hover:bg-rose-600 text-white px-3 py-1.5 rounded-lg shadow-sm text-sm font-semibold"><i class="fas fa-trash-alt mr-1"></i> Kosongkan</button></div>
+                    <div class="space-x-2">
+                        <button onclick="mockAction('Cetak PDF')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg shadow-sm text-sm font-semibold"><i class="fas fa-print mr-1"></i> Cetak</button>
+                        ${currentUser.role === 'Admin' ? `<button onclick="deleteAllData('absensi')" class="bg-rose-500 hover:bg-rose-600 text-white px-3 py-1.5 rounded-lg shadow-sm text-sm font-semibold"><i class="fas fa-trash-alt mr-1"></i> Kosongkan</button>` : ''}
+                    </div>
                 </div>
                 <div class="overflow-x-auto border border-slate-200 rounded-xl max-h-[500px] overflow-y-auto custom-scroll">
                     <table id="table-absensi" class="w-full text-left border-collapse whitespace-nowrap relative">
-                        <thead class="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 shadow-sm"><tr><th class="px-4 py-3 text-sm font-bold text-slate-600">No</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Nama Siswa</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Kelas</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Tanggal</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Scan In</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Scan Out</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Status</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Bukti Wajah</th></tr></thead>
-                        <tbody><tr><td colspan="8" class="text-center py-6 text-slate-500"><i class="fas fa-spinner fa-spin mr-2"></i>Memuat data...</td></tr></tbody>
+                        <thead class="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 shadow-sm"><tr><th class="px-4 py-3 text-sm font-bold text-slate-600">No</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Nama Siswa</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Kelas</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Tanggal</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Scan In</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Scan Out</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Terlambat</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Pulang Cpt</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Status</th><th class="px-4 py-3 text-sm font-bold text-slate-600 text-center">Bukti Wajah</th></tr></thead>
+                        <tbody><tr><td colspan="10" class="text-center py-6 text-slate-500"><i class="fas fa-spinner fa-spin mr-2"></i>Memuat data...</td></tr></tbody>
                     </table>
                 </div>
             </div>`;
@@ -1036,12 +1062,14 @@
                     <td class="px-4 py-3 text-sm text-slate-600">${a.tanggal}</td>
                     <td class="px-4 py-3 text-sm font-bold text-emerald-600">${a.waktu_in || '-'}</td>
                     <td class="px-4 py-3 text-sm font-bold text-rose-600">${a.waktu_out || '-'}</td>
+                    <td class="px-4 py-3 text-sm font-bold text-amber-600">${parseInt(a.terlambat) > 0 ? a.terlambat + ' mnt' : '-'}</td>
+                    <td class="px-4 py-3 text-sm font-bold text-amber-600">${parseInt(a.pulang_cepat) > 0 ? a.pulang_cepat + ' mnt' : '-'}</td>
                     <td class="px-4 py-3 text-sm"><span class="px-2.5 py-1 text-xs font-bold rounded-full ${a.status==='Hadir'?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-700'}">${a.status}</span></td>
                     <td class="px-4 py-3 text-sm text-center"><button onclick="lihatBuktiWajah('${a.id}')" class="text-blue-500 hover:bg-blue-100 p-1.5 rounded shadow-sm border border-blue-200" title="Lihat Foto"><i class="fas fa-camera-retro"></i></button></td>
                 </tr>`;
             }
         });
-        if (rowsHtml === '') rowsHtml = '<tr><td colspan="8" class="text-center py-8 text-slate-500">Tidak ada rekam absensi.</td></tr>';
+        if (rowsHtml === '') rowsHtml = '<tr><td colspan="10" class="text-center py-8 text-slate-500">Tidak ada rekam absensi.</td></tr>';
         tbody.innerHTML = rowsHtml;
     }
 
@@ -1050,7 +1078,8 @@
         return `
             <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-                    <h3 class="text-lg font-bold text-slate-800">Validasi Keterangan Siswa</h3><button onclick="deleteAllData('izin')" class="bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm"><i class="fas fa-trash-alt mr-1"></i> Kosongkan</button>
+                    <h3 class="text-lg font-bold text-slate-800">Validasi Keterangan Siswa</h3>
+                    ${currentUser.role === 'Admin' ? `<button onclick="deleteAllData('izin')" class="bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm"><i class="fas fa-trash-alt mr-1"></i> Kosongkan</button>` : ''}
                 </div>
                 <div class="overflow-x-auto border border-slate-200 rounded-xl max-h-[500px] overflow-y-auto custom-scroll">
                     <table id="table-izin" class="w-full text-left border-collapse relative">
@@ -1223,7 +1252,6 @@
             });
     }
 
-    // FUNGSI BANTUAN WAKTU
     function calcMinutesDiff(time1, time2) {
         let t1 = time1.split(':'); let t2 = time2.split(':');
         let d1 = new Date(2000, 0, 1, t1[0], t1[1]);
@@ -1231,7 +1259,6 @@
         return Math.floor((d2 - d1) / 60000);
     }
 
-    // FIX: Validasi Pengaturan Waktu Absensi
     window.validateAndProcessScan = function(type) {
         const now = new Date();
         const currentTime = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
@@ -1272,11 +1299,9 @@
             }
         }
         
-        // Lanjut ke Face Recognition Asli jika waktu normal valid
         processScan(type, 0, 0);
     };
 
-    // FIX: Integrasi Face Recognition Asli
     async function processScan(type, terlambatMins = 0, pulangCepatMins = 0) {
         const video = document.getElementById('webcam-face'); 
         const instruction = document.getElementById('liveness-instruction'); 
@@ -1288,21 +1313,18 @@
         scanLine.classList.remove('hidden'); 
         instruction.innerHTML = `<span class="text-amber-300 animate-pulse"><i class="fas fa-spinner fa-spin mr-1"></i> Menganalisa Wajah...</span>`;
 
-        // 1. Pastikan Model AI sudah dimuat
         let loaded = await loadFaceApiModels();
         if(!loaded) {
             Swal.fire('Error', 'Gagal memuat sistem AI wajah. Pastikan koneksi internet stabil.', 'error');
             resetScanUI(); return;
         }
 
-        // 2. Ambil referensi wajah dari foto profil siswa (Database)
         let savedDesc = await getRegisteredDescriptor();
         if(!savedDesc) {
             Swal.fire('Error', 'Data wajah Anda tidak valid atau kosong. Harap lapor Admin.', 'error');
             resetScanUI(); return;
         }
 
-        // 3. Deteksi Wajah di Kamera Live saat ini
         const liveDetection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
         
         if(!liveDetection) {
@@ -1311,7 +1333,6 @@
             return;
         }
 
-        // 4. Bandingkan Wajah Kamera vs Wajah Database (Batas Toleransi: 0.55)
         const distance = faceapi.euclideanDistance(savedDesc, liveDetection.descriptor);
         
         if(distance < 0.55) { 
@@ -1409,7 +1430,6 @@
         });
     }
 
-    // FIX: Registrasi kini wajib mendeteksi bahwa ada 'Wajah' di kamera
     window.simpanWajahBaru = async function() {
         const video = document.getElementById('webcam-reg');
         const btn = document.getElementById('btn-reg-wajah');
@@ -1440,9 +1460,8 @@
         canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
         const fotoBase64 = canvas.toDataURL('image/jpeg', 0.8);
         
-        registeredDescriptor = null; // reset cache
+        registeredDescriptor = null; 
 
-        // Bypass testing dummy
         if (IS_PREVIEW && currentUser.id === 'U2') {
             currentUser.foto = fotoBase64;
             Swal.fire({ icon: 'success', title: 'Berhasil!', text: 'Wajah berhasil tersimpan (Mode Preview).' }).then(() => changeView('siswa-scan'));
@@ -1510,13 +1529,47 @@
         Swal.fire('Tersimpan', 'Jadwal operasional berhasil diperbarui untuk sesi ini.', 'success');
     };
 
+    // FIX: Halaman Histori Siswa diperbarui untuk menampilkan kolom Terlambat, Pulang Cepat & Bukti Wajah
     function renderSiswaRiwayat() {
         const myAbsen = dummyAbsensi.filter(a => a.id_user === currentUser.id);
-        let rows = myAbsen.map(a => `
-            <tr class="border-b border-slate-100 hover:bg-slate-50"><td class="px-5 py-4 text-sm font-medium text-slate-700">${a.tanggal}</td><td class="px-5 py-4 text-sm font-bold text-emerald-600"><i class="fas fa-sign-in-alt text-xs mr-1 opacity-50"></i> ${a.waktu_in}</td><td class="px-5 py-4 text-sm font-bold text-rose-600"><i class="fas fa-sign-out-alt text-xs mr-1 opacity-50"></i> ${a.waktu_out}</td><td class="px-5 py-4 text-sm"><span class="bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full text-xs font-bold">${a.status}</span></td></tr>`).join('');
-        if(rows === '') rows = '<tr><td colspan="4" class="text-center py-8 text-slate-400 font-medium">Belum ada riwayat absensi.</td></tr>';
+        let rows = myAbsen.map((a, i) => `
+            <tr class="border-b border-slate-100 hover:bg-slate-50">
+                <td class="px-5 py-4 text-sm font-medium text-slate-700">${a.tanggal}</td>
+                <td class="px-5 py-4 text-sm font-bold text-emerald-600"><i class="fas fa-sign-in-alt text-xs mr-1 opacity-50"></i> ${a.waktu_in}</td>
+                <td class="px-5 py-4 text-sm font-bold text-rose-600"><i class="fas fa-sign-out-alt text-xs mr-1 opacity-50"></i> ${a.waktu_out}</td>
+                <td class="px-5 py-4 text-sm font-bold text-amber-600">${parseInt(a.terlambat) > 0 ? a.terlambat + ' mnt' : '-'}</td>
+                <td class="px-5 py-4 text-sm font-bold text-amber-600">${parseInt(a.pulang_cepat) > 0 ? a.pulang_cepat + ' mnt' : '-'}</td>
+                <td class="px-5 py-4 text-sm"><span class="bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full text-xs font-bold">${a.status}</span></td>
+                <td class="px-5 py-4 text-sm text-center">
+                    <button onclick="lihatBuktiWajah('${a.id}')" class="text-blue-500 hover:bg-blue-100 p-1.5 rounded shadow-sm border border-blue-200" title="Lihat Foto"><i class="fas fa-camera-retro"></i></button>
+                </td>
+            </tr>`).join('');
+            
+        if(rows === '') rows = '<tr><td colspan="7" class="text-center py-8 text-slate-400 font-medium">Belum ada riwayat absensi.</td></tr>';
 
-        return `<div class="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm overflow-hidden border border-slate-100"><div class="bg-slate-900 p-5 text-white flex justify-between items-center shadow-inner"><h3 class="text-lg font-bold"><i class="fas fa-history text-blue-400 mr-2"></i> Log Kehadiran Anda</h3><button onclick="mockAction('Download PDF')" class="bg-slate-800 hover:bg-slate-700 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition">Download PDF</button></div><div class="overflow-x-auto custom-scroll"><table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="px-5 py-3 text-xs uppercase tracking-wider font-bold text-slate-500">Tanggal</th><th class="px-5 py-3 text-xs uppercase tracking-wider font-bold text-slate-500">Scan Masuk</th><th class="px-5 py-3 text-xs uppercase tracking-wider font-bold text-slate-500">Scan Keluar</th><th class="px-5 py-3 text-xs uppercase tracking-wider font-bold text-slate-500">Keterangan</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+        return `
+            <div class="max-w-5xl mx-auto bg-white rounded-2xl shadow-sm overflow-hidden border border-slate-100">
+                <div class="bg-slate-900 p-5 text-white flex justify-between items-center shadow-inner">
+                    <h3 class="text-lg font-bold"><i class="fas fa-history text-blue-400 mr-2"></i> Log Kehadiran Anda</h3>
+                    <button onclick="mockAction('Download PDF')" class="bg-slate-800 hover:bg-slate-700 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition">Download PDF</button>
+                </div>
+                <div class="overflow-x-auto custom-scroll">
+                    <table class="w-full text-left whitespace-nowrap">
+                        <thead class="bg-slate-50 border-b border-slate-200">
+                            <tr>
+                                <th class="px-5 py-3 text-xs uppercase tracking-wider font-bold text-slate-500">Tanggal</th>
+                                <th class="px-5 py-3 text-xs uppercase tracking-wider font-bold text-slate-500">Scan Masuk</th>
+                                <th class="px-5 py-3 text-xs uppercase tracking-wider font-bold text-slate-500">Scan Keluar</th>
+                                <th class="px-5 py-3 text-xs uppercase tracking-wider font-bold text-slate-500">Terlambat</th>
+                                <th class="px-5 py-3 text-xs uppercase tracking-wider font-bold text-slate-500">Pulang Cepat</th>
+                                <th class="px-5 py-3 text-xs uppercase tracking-wider font-bold text-slate-500">Keterangan</th>
+                                <th class="px-5 py-3 text-xs uppercase tracking-wider font-bold text-slate-500 text-center">Bukti Wajah</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </div>`;
     }
 </script>
 </body>
