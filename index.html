@@ -20,12 +20,8 @@
     <!-- SheetJS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-    <!-- Face-API.js -->
-    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-
-    <!-- Leaflet CSS & JS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- JSQR Scanner -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
@@ -47,7 +43,6 @@
             0% { top: 0; } 50% { top: 100%; } 100% { top: 0; }
         }
         
-        #map-picker { z-index: 1; }
         .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scroll::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -73,7 +68,7 @@
     const IS_PREVIEW = false; // Ganti ke false saat di-deploy ke Blogger
     
     // WAJIB ISI DENGAN URL DEPLOYMENT GAS TERBARU ANDA
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbxdrbeQHEZzy9XhLfKxI-iQtPGJKD99LFywzR06_OZ8mK-XuLyKt1mTqgR_l6T7WlP8Gw/exec"; 
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbxXDOSul2szRarGcWxmvVFQ_SYhcVsHZo_e6mtcqjo7fOzkUPFynW6fOuEdRq0DmgwUUA/exec"; 
     const APP_LOGO = "https://i.imghippo.com/files/Qvgj6380ctk.png";
 
     const Toast = Swal.mixin({
@@ -83,68 +78,126 @@
 
     let dummyUsers = [];
     let dummyAbsensi = [];
-    let dummyLokasi = [];
     let dummyIzin = [];
     let dummyPengaturan = { scan_in_start: '06:00', scan_in_end: '07:15', scan_out_start: '14:00', scan_out_end: '16:00' };
 
-    // --- FUNGSI AKSI GLOBAL ---
-    
-    // FIX: Sistem Token Generator berbasis Waktu (Berubah setiap 60 detik)
-    window.getDynamicToken = function(offset = 0) {
-        const timeWindow = Math.floor(Date.now() / 60000) + offset;
-        let str = "SAWAH_SECURE_" + timeWindow;
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-            hash = ((hash << 5) - hash) + str.charCodeAt(i);
-            hash |= 0;
-        }
-        return Math.abs(hash).toString().substring(0, 6).padStart(6, '0');
+    let currentActiveView = '';
+    let dataPollingInterval;
+
+    // --- FUNGSI AUTO REFRESH (REAL TIME) ---
+    function startDataPolling() {
+        if(dataPollingInterval) clearInterval(dataPollingInterval);
+        dataPollingInterval = setInterval(() => {
+            if(!currentUser) return;
+            fetch(GAS_URL, {
+                method: 'POST', body: JSON.stringify({ action: 'getData' })
+            }).then(r => r.json()).then(data => {
+                if(data.success) {
+                    dummyUsers = data.data.users || dummyUsers;
+                    dummyAbsensi = data.data.absensi || dummyAbsensi;
+                    dummyIzin = data.data.izin || dummyIzin;
+                    refreshCurrentViewSoftly();
+                }
+            }).catch(e => console.log('Polling Error'));
+        }, 15000); 
+    }
+
+    function refreshCurrentViewSoftly() {
+        if (currentActiveView === 'admin-absensi' || currentActiveView === 'laporan-absensi') updateTableAbsensi();
+        else if (currentActiveView === 'admin-izin' || currentActiveView === 'wali-izin') updateTableIzin();
+    }
+
+    window.manualRefreshData = function() {
+        const btn = document.getElementById('btn-manual-refresh');
+        if(btn) btn.classList.add('animate-spin');
+        
+        fetch(GAS_URL, {
+            method: 'POST', body: JSON.stringify({ action: 'getData' })
+        }).then(r => r.json()).then(data => {
+            if(data.success) {
+                dummyUsers = data.data.users || dummyUsers;
+                dummyAbsensi = data.data.absensi || dummyAbsensi;
+                dummyIzin = data.data.izin || dummyIzin;
+                refreshCurrentViewSoftly();
+                Toast.fire({ icon: 'success', title: 'Data Mutakhir Ditarik' });
+            }
+        }).finally(() => {
+            if(btn) btn.classList.remove('animate-spin');
+        });
     };
 
-    window.showTokenBypass = function() {
-        Swal.fire({
-            title: '<div class="mx-auto w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mb-2"><i class="fas fa-shield-alt text-indigo-600 text-3xl"></i></div>Otorisasi Guru',
-            html: '<p class="text-sm text-slate-500 mb-4">Minta <b>6-Digit Token</b> dari Guru/Wali Kelas Anda. Token ini otomatis hangus setiap 60 detik untuk mencegah kecurangan.</p>',
-            input: 'text',
-            inputAttributes: { maxlength: 6, pattern: '[0-9]*', inputmode: 'numeric' },
-            inputPlaceholder: 'Masukkan 6 angka token...',
-            showCancelButton: true,
-            confirmButtonText: 'Validasi Akses',
-            cancelButtonText: 'Batal',
-            confirmButtonColor: '#4f46e5',
-            customClass: { popup: 'rounded-2xl', confirmButton: 'rounded-xl shadow-md', cancelButton: 'rounded-xl' },
-            inputValidator: (value) => { if (!value || value.length !== 6) return 'Masukkan 6 digit token yang valid!'; }
-        }).then((result) => {
-            if (result.isConfirmed) {
-                const val = result.value.trim();
-                // Toleransi waktu 1 menit mundur dan 1 menit maju (antisipasi jam HP berbeda)
-                if (val === getDynamicToken(0) || val === getDynamicToken(-1) || val === getDynamicToken(1)) {
-                    Swal.fire({icon: 'success', title: 'Akses Diberikan!', text: 'Sistem mengaktifkan mode manual...', timer: 1500, showConfirmButton: false});
-                    
-                    const video = document.getElementById('webcam');
-                    const placeholder = document.getElementById('camera-placeholder');
-                    const guide = document.getElementById('guide-frame');
-                    const btnIn = document.getElementById('btn-in');
-                    const btnOut = document.getElementById('btn-out');
-                    const gpsStatus = document.getElementById('gps-status');
-                    
-                    gpsStatus.innerHTML = '<i class="fas fa-unlock-alt mr-1"></i> Mode Guru';
-                    gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-indigo-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
-                    placeholder.innerHTML = `<i class="fas fa-camera text-5xl mb-4 text-slate-600"></i><p class="text-sm font-medium">Membuka Kamera...</p>`;
-                    
-                    let tmpLat = document.getElementById('scan-lat');
-                    if (!tmpLat) { tmpLat = document.createElement('input'); tmpLat.type = 'hidden'; tmpLat.id = 'scan-lat'; document.body.appendChild(tmpLat); }
-                    tmpLat.value = "BYPASS-GURU";
+    // --- FUNGSI LIHAT GAMBAR & IZIN ---
+    window.lihatBuktiWajah = function(id_absen) {
+        Swal.fire({ title: 'Memuat Bukti Wajah...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
 
-                    let tmpLon = document.getElementById('scan-lon');
-                    if (!tmpLon) { tmpLon = document.createElement('input'); tmpLon.type = 'hidden'; tmpLon.id = 'scan-lon'; document.body.appendChild(tmpLon); }
-                    tmpLon.value = "BYPASS-GURU";
+        fetch(GAS_URL, {
+            method: 'POST', body: JSON.stringify({ action: 'getFotoAbsensi', id: id_absen })
+        }).then(r => r.json()).then(res => {
+            if(res.success) {
+                let imgHtml = '';
+                if(res.foto_in && res.foto_in !== '-') imgHtml += `<div class="mb-3"><p class="text-xs font-bold text-slate-500 mb-1">Scan Masuk</p><img src="${res.foto_in}" class="w-full rounded-lg border-2 border-emerald-100 shadow-sm"></div>`;
+                if(res.foto_out && res.foto_out !== '-') imgHtml += `<div><p class="text-xs font-bold text-slate-500 mb-1">Scan Keluar</p><img src="${res.foto_out}" class="w-full rounded-lg border-2 border-rose-100 shadow-sm"></div>`;
+                if(imgHtml === '') imgHtml = '<p class="text-slate-500">Foto tidak ditemukan di server.</p>';
 
-                    initCamera(video, placeholder, guide, btnIn, btnOut);
-                } else {
-                    Swal.fire('Akses Ditolak', 'Token SALAH atau sudah KADALUARSA (Token berubah tiap menit).', 'error');
-                }
-            }
+                Swal.fire({ title: 'Bukti Pindai Wajah', html: `<div class="max-h-[60vh] overflow-y-auto">${imgHtml}</div>`, confirmButtonText: 'Tutup', confirmButtonColor: '#3b82f6' });
+            } else Swal.fire('Gagal', res.message, 'error');
+        }).catch(e => Swal.fire('Error', 'Koneksi lambat.', 'error'));
+    };
+
+    window.lihatLampiranIzin = function(id_izin) {
+        Swal.fire({ title: 'Membuka Lampiran...', didOpen: () => Swal.showLoading() });
+        fetch(GAS_URL, {
+            method: 'POST', body: JSON.stringify({ action: 'getFotoIzin', id: id_izin })
+        }).then(r=>r.json()).then(res => {
+            if(res.success && res.file && res.file !== '-') {
+                let html = (res.file.includes('application/pdf') || res.file.includes('data:application/pdf')) 
+                    ? `<embed src="${res.file}" width="100%" height="400px" type="application/pdf">`
+                    : `<img src="${res.file}" class="w-full rounded-lg shadow-sm">`;
+                Swal.fire({ title: 'Lampiran Surat', html: html, confirmButtonText: 'Tutup', width: '600px' });
+            } else Swal.fire('Info', 'Tidak ada lampiran terlampir.', 'info');
+        }).catch(e => Swal.fire('Error', 'Gagal memuat lampiran.', 'error'));
+    };
+
+    window.submitIzin = function() {
+        const kategori = document.getElementById('izin-kategori').value;
+        const dari = document.getElementById('izin-dari').value;
+        const sampai = document.getElementById('izin-sampai').value;
+        const alasan = document.getElementById('izin-alasan').value;
+        const fileInput = document.getElementById('izin-file');
+        
+        if(!fileInput.files[0]) return Swal.fire('Peringatan', 'Lampiran bukti/surat wajib diunggah!', 'warning');
+        if(fileInput.files[0].size > 2 * 1024 * 1024) return Swal.fire('Ditolak', 'Ukuran foto maksimal 2 MB agar server tidak penuh.', 'error');
+        
+        const btn = document.getElementById('btn-kirim-izin');
+        const oText = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Mengirim data...'; btn.disabled = true;
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            fetch(GAS_URL, {
+                method: 'POST', body: JSON.stringify({ action: 'addIzin', data: { id_user: currentUser.id, nama: currentUser.nama, kelas: currentUser.kelas, jenis: kategori.includes('Sakit') ? 'Sakit' : 'Izin', dari: dari, sampai: sampai, alasan: alasan, file: e.target.result } })
+            }).then(r => r.json()).then(res => {
+                if(res.success) {
+                    Swal.fire('Terkirim!', 'Pengajuan diteruskan ke Wali Kelas', 'success');
+                    document.getElementById('izin-form').reset();
+                    dummyIzin.unshift(res.data);
+                } else Swal.fire('Gagal', res.message, 'error');
+            }).finally(() => { btn.innerHTML = oText; btn.disabled = false; });
+        };
+        reader.readAsDataURL(fileInput.files[0]);
+    };
+
+    window.updateIzin = function(id, status) {
+        Swal.fire({title: 'Menyimpan...', didOpen: () => Swal.showLoading()});
+        fetch(GAS_URL, {
+            method: 'POST', body: JSON.stringify({ action: 'updateIzin', data: { id: id, status: status } })
+        }).then(r=>r.json()).then(res => {
+            if(res.success) {
+                let item = dummyIzin.find(i => i.id === id);
+                if(item) item.status = status;
+                Toast.fire({ icon: 'success', title: `Status menjadi: ${status}` });
+                updateTableIzin();
+            } else Swal.fire('Gagal', res.message, 'error');
         });
     };
 
@@ -163,12 +216,12 @@
                     if(res.success) {
                         if(type === 'anggota') dummyUsers = dummyUsers.filter(u => u.role !== 'Siswa');
                         else if(type === 'absensi') dummyAbsensi = [];
-                        else if(type === 'lokasi') dummyLokasi = [];
+                        else if(type === 'izin') dummyIzin = [];
                         
                         Toast.fire({ icon: 'success', title: 'Data berhasil dikosongkan!' });
-                        changeView(type === 'anggota' ? 'admin-users' : (type === 'absensi' ? 'admin-absensi' : 'admin-lokasi'));
+                        changeView(currentActiveView);
                     } else Swal.fire('Gagal', res.message, 'error');
-                }).catch(err => Swal.fire('Error', 'Koneksi terputus', 'error'));
+                });
             }
         });
     };
@@ -184,40 +237,12 @@
                      Swal.close();
                      if(response.success) {
                          if(type==='user') dummyUsers = dummyUsers.filter(u => u.id !== id);
-                         else if(type==='lokasi') dummyLokasi = dummyLokasi.filter(l => l.id !== id);
                          Toast.fire({ icon: 'success', title: 'Item berhasil dihapus.' });
-                         changeView('admin-' + (type==='user'?'users':'lokasi'));
-                     } else { Swal.fire('Gagal', response.message, 'error'); }
+                         changeView(currentActiveView);
+                     } else Swal.fire('Gagal', response.message, 'error');
                  });
              }
          });
-    };
-
-    window.updateIzin = function(id, status) {
-        let item = dummyIzin.find(i => i.id === id);
-        if(item) item.status = status;
-        Toast.fire({ icon: 'success', title: `Status diubah: ${status}` });
-        changeView(currentUser.role === 'Admin' ? 'admin-izin' : 'wali-izin');
-    };
-
-    window.mockAction = function(title) {
-        Swal.fire(title, 'Fitur sedang diproses dalam versi ini.', 'info');
-    };
-
-    // --- FUNGSI FILTERING ---
-    window.filterAbsensi = function() {
-        let keyword = document.getElementById('search-absensi').value.toLowerCase();
-        let kelas = document.getElementById('filter-kelas') ? document.getElementById('filter-kelas').value : "";
-        let tanggal = document.getElementById('filter-tanggal').value;
-        
-        let rows = document.querySelectorAll(`#table-absensi tbody tr`);
-        rows.forEach(row => {
-            if(row.children.length === 1) return; 
-            let text = row.innerText.toLowerCase();
-            let rowKelas = row.children[2].innerText;
-            let rowTanggal = row.children[3].innerText;
-            row.style.display = (text.includes(keyword) && (kelas === "" || rowKelas === kelas) && (tanggal === "" || rowTanggal === tanggal)) ? '' : 'none';
-        });
     };
 
     window.filterUsers = function() {
@@ -232,10 +257,6 @@
         });
     };
 
-    window.luluskanSiswa = function() { Swal.fire('Fitur Live', 'Gunakan Sort/Filter langsung di Google Sheets untuk menghapus lulusan secara massal dan aman.', 'info'); };
-    window.naikkanSiswa = function() { Swal.fire('Fitur Live', 'Gunakan Sort/Filter langsung di Google Sheets untuk proses kenaikan kelas yang aman.', 'info'); };
-
-    // --- MODAL MANAJEMEN ANGGOTA ---
     window.showAddUserModal = function() {
         Swal.fire({
             title: '<div class="flex flex-col items-center"><div class="w-14 h-14 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-2 shadow-inner"><i class="fas fa-user-plus text-2xl"></i></div><span class="text-xl font-bold text-slate-800">Tambah Anggota</span></div>',
@@ -276,11 +297,10 @@
                     Swal.close();
                     if(res.success) {
                         v.id = res.newId; v.username = v.nisn; v.password = '123456';
-                        dummyUsers.unshift(v); 
-                        Toast.fire({ icon: 'success', title: 'Tersimpan.' });
+                        dummyUsers.unshift(v); Toast.fire({ icon: 'success', title: 'Tersimpan.' });
                         changeView('admin-users'); 
                     } else Swal.fire('Gagal', res.message, 'error');
-                }).catch(err => Swal.fire('Error', 'Gagal menyimpan.', 'error'));
+                });
             }
         });
     };
@@ -317,8 +337,7 @@
                     if(res.success) {
                         user.nama = result.value.nama; user.nisn = result.value.nisn; user.username = result.value.nisn; user.kelas = result.value.kelas; user.password = result.value.password;
                         if(currentUser && currentUser.id === result.value.id) { currentUser.password = result.value.password; currentUser.nama = result.value.nama; }
-                        Toast.fire({ icon: 'success', title: 'Tersimpan.' });
-                        changeView('admin-users');
+                        Toast.fire({ icon: 'success', title: 'Tersimpan.' }); changeView('admin-users');
                     } else Swal.fire('Gagal', res.message, 'error');
                 });
             }
@@ -386,24 +405,6 @@
         });
     };
 
-    window.simpanLokasiBaru = function() {
-        let nama = document.getElementById('lokasi-nama').value;
-        let lat = document.getElementById('lat').value; let lon = document.getElementById('lon').value; let radius = document.getElementById('radius').value;
-        if(!nama || !lat || !lon) return Swal.fire('Error', 'Lengkapi data.', 'error');
-        
-        const btn = document.getElementById('btn-simpan-lokasi'); const oText = btn.innerHTML;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Menyimpan...'; btn.disabled = true;
-
-        fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ action: 'addLokasi', data: { nama: nama, lat: lat, lon: lon, radius: radius } }) })
-        .then(r => r.json()).then(res => {
-            if(res.success) {
-                dummyLokasi.push({ id: res.newId, nama: nama, lat: parseFloat(lat), lon: parseFloat(lon), radius: parseInt(radius) });
-                Toast.fire({ icon: 'success', title: 'Lokasi ditambahkan.' });
-                changeView('admin-lokasi');
-            } else Swal.fire('Gagal', res.message, 'error');
-        }).finally(() => { btn.innerHTML = oText; btn.disabled = false; });
-    };
-
     window.simpanProfil = function() {
         let hasChanges = false;
         let pData = { id: currentUser.id, nama: currentUser.nama, password: currentUser.password };
@@ -437,7 +438,6 @@
                 if(res.success) {
                     currentUser.password = dataToSend.password; currentUser.nama = dataToSend.nama;
                     if(hasFoto) currentUser.foto = dataToSend.foto;
-                    
                     Toast.fire({ icon: 'success', title: 'Profil Diperbarui.' });
                     document.getElementById('header-name').innerText = currentUser.nama;
                     if(hasFoto) {
@@ -450,8 +450,18 @@
         }
     };
 
-    let currentUser = null; let stream = null; let mapInstance = null; let mapMarker = null; let activeInterval = null;
+    let currentUser = null; 
+    let streamQR = null; 
+    let streamFace = null; 
+    let qrScannerLoop = null; 
+    let activeInterval = null; 
+    let isQrVerified = false;
+
     window.onload = () => { renderApp(); };
+
+    function stopMediaTracks(stream) {
+        if (stream) { stream.getTracks().forEach(track => track.stop()); }
+    }
 
     function renderApp() {
         const root = document.createElement('div');
@@ -514,15 +524,13 @@
 
         if (IS_PREVIEW && userVal === 'admin' && passVal === 'edudigital') {
              currentUser = { id: 'U1', username: 'admin', role: 'Admin', nama: 'Administrator Dummy', kelas: '-', nisn: '-' };
-             dummyLokasi = [{ id: 'l1', nama: 'Gerbang Utama SMPN 1', lat: -8.5361, lon: 115.4215, radius: 100 }];
              Toast.fire({ icon: 'success', title: 'Login Admin Preview' });
-             renderApp(); return;
+             startDataPolling(); renderApp(); return;
         }
         if (IS_PREVIEW && userVal === 'peserta' && passVal === 'edudigital') {
              currentUser = { id: 'U2', username: 'peserta', role: 'Siswa', nama: 'Siswa Dummy', kelas: '7A', nisn: '12345', foto: '' };
-             dummyLokasi = [{ id: 'l1', nama: 'Dummy Lokasi Test', lat: -8.5361, lon: 115.4215, radius: 2000 }]; 
              Toast.fire({ icon: 'success', title: 'Login Siswa Preview' });
-             renderApp(); return;
+             startDataPolling(); renderApp(); return;
         }
 
         fetch(GAS_URL, {
@@ -532,11 +540,10 @@
                 currentUser = data.user; 
                 dummyUsers = data.appData.users || [];
                 dummyAbsensi = data.appData.absensi || [];
-                dummyLokasi = data.appData.lokasi || [];
-                if(dummyLokasi.length === 0) dummyLokasi = [{ id: 'l1', nama: 'Gerbang Utama SMPN 1', lat: -8.5361, lon: 115.4215, radius: 100 }];
+                dummyIzin = data.appData.izin || [];
                 
                 Toast.fire({ icon: 'success', title: 'Akses Diterima!' });
-                renderApp(); 
+                startDataPolling(); renderApp(); 
             } else { 
                 Swal.fire('Gagal', data.message, 'error'); 
                 btnLogin.innerHTML = originalText; btnLogin.disabled = false;
@@ -560,7 +567,7 @@
                     <a href="#" onclick="changeView('admin-dashboard')" data-view="admin-dashboard" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-home w-6 group-hover:text-blue-400 transition"></i> Dashboard</a>
                     <a href="#" onclick="changeView('admin-users')" data-view="admin-users" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-users w-6 group-hover:text-blue-400 transition"></i> Data Anggota</a>
                     <a href="#" onclick="changeView('admin-absensi')" data-view="admin-absensi" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-calendar-check w-6 group-hover:text-blue-400 transition"></i> Data Absensi</a>
-                    <a href="#" onclick="changeView('admin-lokasi')" data-view="admin-lokasi" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-map-marker-alt w-6 group-hover:text-blue-400 transition"></i> Data Lokasi</a>
+                    <a href="#" onclick="changeView('admin-qrcode')" data-view="admin-qrcode" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-qrcode w-6 group-hover:text-blue-400 transition"></i> QR Code Kelas</a>
                     <a href="#" onclick="changeView('admin-izin')" data-view="admin-izin" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-envelope-open-text w-6 group-hover:text-blue-400 transition"></i> Persetujuan Izin</a>
                     <a href="#" onclick="changeView('admin-waktu')" data-view="admin-waktu" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-clock w-6 group-hover:text-blue-400 transition"></i> Pengaturan Waktu</a>
                     <div class="my-2 border-t border-slate-700"></div>
@@ -572,7 +579,8 @@
                 <nav class="flex-1 px-3 py-6 space-y-1">
                     <a href="#" onclick="changeView('admin-dashboard')" data-view="admin-dashboard" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-home w-6 group-hover:text-blue-400 transition"></i> Dashboard Kelas</a>
                     <a href="#" onclick="changeView('admin-users')" data-view="admin-users" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-users w-6 group-hover:text-blue-400 transition"></i> Data Siswa</a>
-                    <a href="#" onclick="changeView('laporan-absensi')" data-view="laporan-absensi" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-chart-bar w-6 group-hover:text-blue-400 transition"></i> Laporan Absensi Kelas</a>
+                    <a href="#" onclick="changeView('laporan-absensi')" data-view="laporan-absensi" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-chart-bar w-6 group-hover:text-blue-400 transition"></i> Laporan Absensi</a>
+                    <a href="#" onclick="changeView('admin-qrcode')" data-view="admin-qrcode" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-qrcode w-6 group-hover:text-blue-400 transition"></i> QR Code Absen</a>
                     <a href="#" onclick="changeView('wali-izin')" data-view="wali-izin" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-envelope-open-text w-6 group-hover:text-blue-400 transition"></i> Persetujuan Izin</a>
                     <div class="my-2 border-t border-slate-700"></div>
                     <a href="#" onclick="changeView('profil')" data-view="profil" class="nav-item flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-slate-800 hover:text-white transition group"><i class="fas fa-user-cog w-6 group-hover:text-blue-400 transition"></i> Profil Saya</a>
@@ -610,6 +618,7 @@
         header.innerHTML = `
             <div class="flex items-center"><button onclick="toggleSidebar()" class="md:hidden text-gray-500 hover:text-blue-600 focus:outline-none mr-4 transition"><i class="fas fa-bars text-xl"></i></button><h2 class="font-bold text-xl text-gray-800" id="header-title">Dashboard</h2></div>
             <div class="flex items-center bg-slate-50 py-1.5 px-3 rounded-full border border-slate-200">
+                <button id="btn-manual-refresh" onclick="manualRefreshData()" class="mr-3 text-blue-600 hover:text-blue-800 transition flex items-center bg-blue-100 hover:bg-blue-200 px-3 py-1.5 rounded-full text-xs font-bold border border-blue-200 shadow-sm"><i class="fas fa-sync-alt mr-1"></i> Refresh</button>
                 <div class="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center mr-3 border border-slate-300 shadow-sm">${userAvatar}</div>
                 <div class="text-right mr-2 hidden sm:block"><div class="text-sm font-bold text-gray-800 leading-tight" id="header-name">${currentUser.nama}</div><div class="text-xs text-blue-600 font-medium">${currentUser.role}</div></div>
             </div>`;
@@ -617,14 +626,10 @@
         const content = document.createElement('main'); content.id = 'main-content'; content.className = 'flex-1 overflow-x-hidden overflow-y-auto bg-slate-50 p-6 custom-scroll';
         main.appendChild(header); main.appendChild(content); container.appendChild(sidebar); container.appendChild(main);
 
-        // Alur Redirect Pertama Kali Login (Bila Belum Punya Data Wajah)
         setTimeout(() => { 
             if(currentUser.role === 'Siswa') {
-                if (!currentUser.foto || currentUser.foto.trim() === '') {
-                    changeView('siswa-wajah');
-                } else {
-                    changeView('siswa-scan'); 
-                }
+                if (!currentUser.foto || currentUser.foto.trim() === '') changeView('siswa-wajah');
+                else changeView('siswa-scan'); 
             } else {
                 changeView('admin-dashboard'); 
             }
@@ -636,6 +641,7 @@
     function toggleSidebar() { document.getElementById('sidebar').classList.toggle('hidden'); }
 
     function changeView(viewName) {
+        currentActiveView = viewName;
         document.querySelectorAll('.nav-item').forEach(el => { el.classList.remove('bg-slate-800', 'text-white', 'shadow-inner'); el.classList.add('text-slate-300'); });
         const activeItem = document.querySelector(`.nav-item[data-view="${viewName}"]`);
         if(activeItem) { activeItem.classList.add('bg-slate-800', 'text-white', 'shadow-inner'); activeItem.classList.remove('text-slate-300'); }
@@ -647,7 +653,11 @@
         const content = document.getElementById('main-content');
         const headerTitle = document.getElementById('header-title');
         
-        if(stream) { stream.getTracks().forEach(track => track.stop()); stream = null; }
+        // Membersihkan Memory Kamera saat pindah Menu
+        stopMediaTracks(streamQR); streamQR = null;
+        stopMediaTracks(streamFace); streamFace = null;
+        if(qrScannerLoop) cancelAnimationFrame(qrScannerLoop); qrScannerLoop = null;
+        
         if(activeInterval) { clearInterval(activeInterval); activeInterval = null; }
 
         switch(viewName) {
@@ -658,29 +668,22 @@
                 activeInterval = setInterval(() => { 
                     const clock = document.getElementById('live-clock'); 
                     if(clock) clock.innerText = new Date().toLocaleTimeString('id-ID'); 
-                    
-                    // FIX: Animasi dan update Token Dinamis di Admin
-                    const tokenDisplay = document.getElementById('dynamic-token-display');
-                    const tokenProgress = document.getElementById('token-progress');
-                    if(tokenDisplay && tokenProgress) {
-                        tokenDisplay.innerText = getDynamicToken(0);
-                        const seconds = new Date().getSeconds();
-                        const progress = ((60 - seconds) / 60) * 100;
-                        tokenProgress.style.width = progress + '%';
-                    }
                 }, 1000);
                 break;
             case 'admin-users': headerTitle.innerText = currentUser.role === 'Admin' ? "Kelola Data Anggota" : (currentUser.role === 'Wali' ? "Data Siswa Kelas " + currentUser.kelas : "Direktori Seluruh Siswa"); content.innerHTML = renderAdminUsers(); break;
             case 'admin-absensi': headerTitle.innerText = "Data & Laporan Absensi"; content.innerHTML = renderAdminAbsensi(); break;
-            case 'admin-lokasi': headerTitle.innerText = "Manajemen Area Absensi (GPS)"; content.innerHTML = renderAdminLokasi(); setTimeout(initMap, 300); break;
+            case 'admin-qrcode': headerTitle.innerText = "Generator QR Code Absensi"; content.innerHTML = renderAdminQRCode(); break;
             case 'admin-izin': headerTitle.innerText = "Validasi Keterangan Tidak Hadir"; content.innerHTML = renderAdminIzin(); break;
             case 'wali-izin': headerTitle.innerText = "Validasi Izin Kelas " + currentUser.kelas; content.innerHTML = renderAdminIzin(); break;
             case 'admin-waktu': headerTitle.innerText = "Pengaturan Jam Operasional"; content.innerHTML = renderAdminWaktu(); break;
-            case 'siswa-scan': headerTitle.innerText = "Pindai Wajah Kehadiran"; content.innerHTML = renderSiswaScan(); break;
+            case 'siswa-scan': 
+                headerTitle.innerText = "Pindai Wajah Kehadiran"; 
+                isQrVerified = false; // Reset status QR setiap masuk menu ini
+                content.innerHTML = renderSiswaScan(); 
+                break;
             case 'siswa-wajah': 
                 headerTitle.innerText = "Registrasi Pola Wajah"; 
                 content.innerHTML = renderSiswaWajah(); 
-                // Mulai kamera otomatis jika belum punya foto
                 if (!currentUser.foto || currentUser.foto.trim() === '') setTimeout(initKameraRegistrasi, 300);
                 break;
             case 'siswa-izin': headerTitle.innerText = "Formulir Izin / Sakit"; content.innerHTML = renderSiswaIzin(); break;
@@ -691,7 +694,7 @@
 
     function logout() {
         Swal.fire({ title: 'Keluar Sistem?', text: "Sesi Anda akan diakhiri.", icon: 'warning', showCancelButton: true, confirmButtonColor: '#3b82f6', cancelButtonColor: '#ef4444', confirmButtonText: 'Ya, Keluar!', cancelButtonText: 'Batal' })
-        .then((result) => { if (result.isConfirmed) { currentUser = null; if(activeInterval) clearInterval(activeInterval); if(stream) stream.getTracks().forEach(t => t.stop()); renderApp(); } });
+        .then((result) => { if (result.isConfirmed) { currentUser = null; if(dataPollingInterval) clearInterval(dataPollingInterval); if(activeInterval) clearInterval(activeInterval); stopMediaTracks(streamQR); stopMediaTracks(streamFace); renderApp(); } });
     }
 
     function renderAdminDashboard() {
@@ -719,11 +722,6 @@
                     <div><h3 class="text-2xl font-extrabold text-slate-800 tracking-tight">Dashboard ${titleSuffix}</h3><p class="text-sm text-slate-500 font-medium">${tglStr}</p></div>
                 </div>
                 <div class="flex gap-3">
-                    <div class="bg-indigo-50 border border-indigo-200 px-5 py-3 rounded-xl shadow-inner text-center min-w-[140px] relative overflow-hidden" title="Berikan 6 digit ini pada siswa yang GPS-nya bermasalah.">
-                        <div class="text-[10px] font-bold text-indigo-500 uppercase tracking-wider mb-0.5"><i class="fas fa-shield-alt mr-1"></i>Token Akses GPS</div>
-                        <div id="dynamic-token-display" class="text-2xl font-black text-indigo-700 tracking-widest mt-1">------</div>
-                        <div class="absolute bottom-0 left-0 h-1.5 bg-indigo-500 transition-all duration-1000" id="token-progress" style="width: 100%"></div>
-                    </div>
                     <div class="bg-slate-800 text-white px-6 py-3 rounded-xl shadow-inner text-center border border-slate-700 min-w-[140px]">
                         <div class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">Jam Server</div>
                         <div id="live-clock" class="text-xl font-mono font-bold text-blue-400 tracking-wider mt-1">--:--:--</div>
@@ -746,13 +744,15 @@
                         <div class="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 text-xl group-hover:bg-emerald-600 group-hover:text-white transition-colors shadow-sm"><i class="fas fa-clipboard-check"></i></div>
                     </div>
                 </div>
-                <div ${currentUser.role === 'Admin' ? 'onclick="changeView(\'admin-lokasi\')"' : ''} class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 ${currentUser.role === 'Admin' ? 'cursor-pointer hover:-translate-y-1 hover:shadow-lg' : ''} transform transition-all duration-300 relative overflow-hidden group">
+                
+                <div onclick="changeView('${currentUser.role === 'Admin' || currentUser.role === 'Wali' ? 'admin-qrcode' : 'admin-dashboard'})" class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 cursor-pointer hover:-translate-y-1 hover:shadow-lg transform transition-all duration-300 relative overflow-hidden group">
                     <div class="absolute top-0 left-0 w-1 h-full bg-amber-500"></div>
                     <div class="flex justify-between items-start">
-                        <div><p class="text-sm font-semibold text-slate-500 mb-1 group-hover:text-amber-600 transition-colors">Titik Lokasi Aktif</p><h3 class="text-4xl font-black text-slate-800">${dummyLokasi.length}</h3></div>
-                        <div class="w-12 h-12 bg-amber-50 rounded-xl flex items-center justify-center text-amber-600 text-xl group-hover:bg-amber-600 group-hover:text-white transition-colors shadow-sm"><i class="fas fa-map-marked-alt"></i></div>
+                        <div><p class="text-sm font-semibold text-slate-500 mb-1 group-hover:text-amber-600 transition-colors">Sistem Keamanan</p><h3 class="text-2xl font-black text-slate-800 mt-2">QR AKTIF</h3></div>
+                        <div class="w-12 h-12 bg-amber-50 rounded-xl flex items-center justify-center text-amber-600 text-xl group-hover:bg-amber-600 group-hover:text-white transition-colors shadow-sm"><i class="fas fa-qrcode"></i></div>
                     </div>
                 </div>
+
                 <div onclick="changeView('${currentUser.role === 'Admin' ? 'admin-izin' : (currentUser.role === 'Wali' ? 'wali-izin' : 'admin-dashboard')}')" class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 ${currentUser.role !== 'Kepsek' ? 'cursor-pointer hover:-translate-y-1 hover:shadow-lg' : ''} transform transition-all duration-300 relative overflow-hidden group">
                     <div class="absolute top-0 left-0 w-1 h-full bg-rose-500"></div>
                     <div class="flex justify-between items-start">
@@ -762,7 +762,6 @@
                 </div>
             </div>
 
-            <!-- GRAFIK STATISTIK -->
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
                     <h4 class="font-bold text-slate-800 mb-4"><i class="fas fa-chart-bar text-blue-500 mr-2"></i>Statistik Kehadiran ${titleSuffix}</h4>
@@ -872,6 +871,29 @@
             </div>`;
     }
 
+    // --- RENDER QR CODE ADMIN (PENGGANTI LOKASI GPS) ---
+    function renderAdminQRCode() {
+        const d = new Date();
+        const todayStr = String(d.getDate()).padStart(2, '0') + String(d.getMonth()+1).padStart(2, '0') + d.getFullYear();
+        const qrData = "SAWAH_QR_" + todayStr;
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${qrData}`;
+        
+        return `
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 text-center max-w-2xl mx-auto mt-6">
+                <h3 class="text-2xl font-bold text-slate-800 mb-2"><i class="fas fa-qrcode text-indigo-500 mr-2"></i>QR Code Kelas Hari Ini</h3>
+                <p class="text-slate-500 mb-6 text-sm">Tampilkan QR Code ini di layar proyektor atau cetak agar siswa dapat melakukan absensi melalui aplikasi SAWAH.</p>
+                <div class="inline-block p-4 bg-slate-50 border-2 border-dashed border-slate-300 rounded-2xl mb-6 relative group">
+                    <img src="${qrUrl}" alt="QR Code" class="w-64 h-64 mx-auto rounded-lg shadow-sm">
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Data Validasi Server</p>
+                    <p class="text-sm font-bold text-slate-700 bg-slate-100 py-2 rounded-lg inline-block px-6 border border-slate-200">${qrData}</p>
+                </div>
+                <p class="text-xs text-rose-500 mt-6 font-semibold"><i class="fas fa-info-circle mr-1"></i>Sistem Enkripsi: QR Code ini otomatis akan kadaluarsa saat berganti hari.</p>
+            </div>
+        `;
+    }
+
     function renderProfil() {
         let fieldsHtml = '';
         let role = currentUser.role;
@@ -898,32 +920,18 @@
     }
 
     function renderAdminAbsensi() {
-        let dataAbsensi = dummyAbsensi;
-        if (currentUser.role === 'Wali') dataAbsensi = dummyAbsensi.filter(a => a.kelas === currentUser.kelas);
-
-        let rows = dataAbsensi.map((a, i) => `
-            <tr class="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                <td class="px-4 py-3 text-sm text-slate-600">${i+1}</td>
-                <td class="px-4 py-3 text-sm font-bold text-slate-800">${a.nama}</td>
-                <td class="px-4 py-3 text-sm text-slate-600">${a.kelas}</td>
-                <td class="px-4 py-3 text-sm text-slate-600">${a.tanggal}</td>
-                <td class="px-4 py-3 text-sm font-bold text-emerald-600">${a.waktu_in || '-'}</td>
-                <td class="px-4 py-3 text-sm font-bold text-rose-600">${a.waktu_out || '-'}</td>
-                <td class="px-4 py-3 text-sm"><span class="px-2.5 py-1 text-xs font-bold rounded-full ${a.status==='Hadir'?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-700'}">${a.status}</span></td>
-                <td class="px-4 py-3 text-sm text-center"><button onclick="mockAction('Foto Scan')" class="text-blue-500 hover:bg-blue-100 p-1.5 rounded"><i class="fas fa-camera-retro"></i></button></td>
-            </tr>`).join('');
-
+        setTimeout(updateTableAbsensi, 50); 
         let filterKelasHtml = currentUser.role === 'Wali' ? `<input type="hidden" id="filter-kelas" value="${currentUser.kelas}">` : `
-            <div><label class="block text-xs font-semibold text-slate-500 mb-1">Filter Kelas</label><select id="filter-kelas" onchange="filterAbsensi()" class="w-full border-slate-300 border rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"><option value="">Semua Kelas</option><option value="7A">7A</option><option value="8A">8A</option><option value="9A">9A</option></select></div>`;
+            <div><label class="block text-xs font-semibold text-slate-500 mb-1">Filter Kelas</label><select id="filter-kelas" onchange="updateTableAbsensi()" class="w-full border-slate-300 border rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"><option value="">Semua Kelas</option><option value="7A">7A</option><option value="8A">8A</option><option value="9A">9A</option></select></div>`;
 
         return `
             <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 mb-6">
                 <h3 class="text-sm font-bold text-slate-800 mb-4 uppercase tracking-wider"><i class="fas fa-filter text-blue-500 mr-2"></i>Filter Data Absensi</h3>
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div class="md:col-span-1"><label class="block text-xs font-semibold text-slate-500 mb-1">Cari Nama</label><input type="text" id="search-absensi" onkeyup="filterAbsensi()" placeholder="Ketik kata kunci..." class="w-full border-slate-300 border rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></div>
+                    <div class="md:col-span-1"><label class="block text-xs font-semibold text-slate-500 mb-1">Cari Nama</label><input type="text" id="search-absensi" onkeyup="updateTableAbsensi()" placeholder="Ketik kata kunci..." class="w-full border-slate-300 border rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"></div>
                     ${filterKelasHtml}
-                    <div><label class="block text-xs font-semibold text-slate-500 mb-1">Filter Tanggal</label><input type="date" id="filter-tanggal" onchange="filterAbsensi()" class="w-full border-slate-300 border rounded-lg p-2.5 text-sm outline-none"></div>
-                    <div class="flex items-end"><button onclick="document.getElementById('search-absensi').value=''; document.getElementById('filter-kelas').value=''; document.getElementById('filter-tanggal').value=''; filterAbsensi();" class="bg-slate-200 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-slate-300 w-full"><i class="fas fa-redo mr-1"></i> Reset</button></div>
+                    <div><label class="block text-xs font-semibold text-slate-500 mb-1">Filter Tanggal</label><input type="date" id="filter-tanggal" onchange="updateTableAbsensi()" class="w-full border-slate-300 border rounded-lg p-2.5 text-sm outline-none"></div>
+                    <div class="flex items-end"><button onclick="document.getElementById('search-absensi').value=''; document.getElementById('filter-kelas').value=''; document.getElementById('filter-tanggal').value=''; updateTableAbsensi();" class="bg-slate-200 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-slate-300 w-full"><i class="fas fa-redo mr-1"></i> Reset</button></div>
                 </div>
             </div>
             <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
@@ -934,79 +942,252 @@
                 <div class="overflow-x-auto border border-slate-200 rounded-xl max-h-[500px] overflow-y-auto custom-scroll">
                     <table id="table-absensi" class="w-full text-left border-collapse whitespace-nowrap relative">
                         <thead class="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 shadow-sm"><tr><th class="px-4 py-3 text-sm font-bold text-slate-600">No</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Nama Siswa</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Kelas</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Tanggal</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Scan In</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Scan Out</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Status</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Bukti Wajah</th></tr></thead>
-                        <tbody>${dataAbsensi.length > 0 ? rows : '<tr><td colspan="8" class="text-center py-6 text-slate-500">Data Kosong.</td></tr>'}</tbody>
+                        <tbody><tr><td colspan="8" class="text-center py-6 text-slate-500"><i class="fas fa-spinner fa-spin mr-2"></i>Memuat data...</td></tr></tbody>
                     </table>
                 </div>
             </div>`;
     }
 
-    function renderAdminLokasi() {
+    function updateTableAbsensi() {
+        let tbody = document.querySelector('#table-absensi tbody');
+        if(!tbody) return;
+        let dataAbsensi = currentUser.role === 'Wali' ? dummyAbsensi.filter(a => a.kelas === currentUser.kelas) : dummyAbsensi;
+        let keyword = document.getElementById('search-absensi') ? document.getElementById('search-absensi').value.toLowerCase() : "";
+        let kelas = document.getElementById('filter-kelas') ? document.getElementById('filter-kelas').value : "";
+        let tanggal = document.getElementById('filter-tanggal') ? document.getElementById('filter-tanggal').value : "";
+        
+        let rowsHtml = ''; let count = 1;
+        dataAbsensi.forEach((a) => {
+            let textForSearch = (a.nama + ' ' + a.kelas + ' ' + a.tanggal + ' ' + a.status).toLowerCase();
+            if (textForSearch.includes(keyword) && (kelas === "" || a.kelas === kelas) && (tanggal === "" || a.tanggal === tanggal)) {
+                rowsHtml += `
+                <tr class="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                    <td class="px-4 py-3 text-sm text-slate-600">${count++}</td>
+                    <td class="px-4 py-3 text-sm font-bold text-slate-800">${a.nama}</td>
+                    <td class="px-4 py-3 text-sm text-slate-600">${a.kelas}</td>
+                    <td class="px-4 py-3 text-sm text-slate-600">${a.tanggal}</td>
+                    <td class="px-4 py-3 text-sm font-bold text-emerald-600">${a.waktu_in || '-'}</td>
+                    <td class="px-4 py-3 text-sm font-bold text-rose-600">${a.waktu_out || '-'}</td>
+                    <td class="px-4 py-3 text-sm"><span class="px-2.5 py-1 text-xs font-bold rounded-full ${a.status==='Hadir'?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-700'}">${a.status}</span></td>
+                    <td class="px-4 py-3 text-sm text-center"><button onclick="lihatBuktiWajah('${a.id}')" class="text-blue-500 hover:bg-blue-100 p-1.5 rounded shadow-sm border border-blue-200" title="Lihat Foto"><i class="fas fa-camera-retro"></i></button></td>
+                </tr>`;
+            }
+        });
+        if (rowsHtml === '') rowsHtml = '<tr><td colspan="8" class="text-center py-8 text-slate-500">Tidak ada rekam absensi.</td></tr>';
+        tbody.innerHTML = rowsHtml;
+    }
+
+    function renderAdminIzin() {
+        setTimeout(updateTableIzin, 50);
         return `
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-                    <h3 class="text-lg font-bold text-slate-800 mb-4"><i class="fas fa-map-marked-alt text-blue-500 mr-2"></i>Tambah Titik GPS</h3>
-                    <div class="mb-4 border border-slate-200 rounded-xl overflow-hidden relative shadow-sm">
-                        <div id="map-picker" class="w-full h-64 z-10 bg-slate-100"></div>
-                        <div class="absolute top-2 right-2 z-[400]"><button onclick="getGPSCurrent(this)" type="button" class="bg-white text-blue-600 px-3 py-2 rounded-lg shadow-md font-bold text-xs hover:bg-blue-50 border border-slate-100 transition"><i class="fas fa-crosshairs mr-1"></i> Posisi Saat Ini</button></div>
-                        <div class="absolute bottom-2 left-2 z-[400] bg-white/90 px-3 py-1.5 rounded shadow text-xs font-semibold text-slate-600 border border-slate-200 backdrop-blur-sm"><i class="fas fa-info-circle text-blue-500 mr-1"></i> Geser penanda atau klik peta</div>
-                    </div>
-                    <form onsubmit="event.preventDefault(); simpanLokasiBaru();" class="space-y-4">
-                        <div><label class="block text-xs font-bold text-slate-600 mb-1">Nama Area</label><input type="text" id="lokasi-nama" required class="w-full border-slate-300 border rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"></div>
-                        <div class="grid grid-cols-2 gap-4">
-                            <div><label class="block text-xs font-bold text-slate-600 mb-1">Lat</label><input type="text" id="lat" required readonly class="w-full bg-slate-50 border-slate-300 border rounded-lg p-2.5 text-sm font-mono text-slate-500 outline-none"></div>
-                            <div><label class="block text-xs font-bold text-slate-600 mb-1">Lon</label><input type="text" id="lon" required readonly class="w-full bg-slate-50 border-slate-300 border rounded-lg p-2.5 text-sm font-mono text-slate-500 outline-none"></div>
-                        </div>
-                        <div><label class="block text-xs font-bold text-slate-600 mb-1">Toleransi Jarak (Meter)</label><input type="number" id="radius" value="50" min="10" required class="w-full border-slate-300 border rounded-lg p-2.5 text-sm outline-none shadow-sm"></div>
-                        <button type="submit" id="btn-simpan-lokasi" class="w-full bg-blue-600 text-white px-4 py-3 rounded-xl shadow-md font-bold text-sm hover:bg-blue-700 transition active:scale-95"><i class="fas fa-save mr-1"></i> SIMPAN LOKASI</button>
-                    </form>
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                    <h3 class="text-lg font-bold text-slate-800">Validasi Keterangan Siswa</h3><button onclick="deleteAllData('izin')" class="bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm"><i class="fas fa-trash-alt mr-1"></i> Kosongkan</button>
                 </div>
-                <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col h-full">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-bold text-slate-800">Daftar Titik Diizinkan</h3><button onclick="deleteAllData('lokasi')" class="text-xs bg-rose-100 text-rose-600 hover:bg-rose-200 px-3 py-1.5 rounded-lg font-bold transition shadow-sm"><i class="fas fa-trash-alt mr-1"></i> Hapus Semua</button>
+                <div class="overflow-x-auto border border-slate-200 rounded-xl max-h-[500px] overflow-y-auto custom-scroll">
+                    <table id="table-izin" class="w-full text-left border-collapse relative">
+                        <thead class="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 shadow-sm"><tr><th class="px-4 py-3 text-sm font-bold text-slate-600">No</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Nama Siswa</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Kelas</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Kategori</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Tanggal</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Alasan</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Status</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Aksi</th></tr></thead>
+                        <tbody><tr><td colspan="8" class="text-center py-10 text-slate-500"><i class="fas fa-spinner fa-spin mr-2"></i>Memuat...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>`;
+    }
+
+    function updateTableIzin() {
+        let tbody = document.querySelector('#table-izin tbody');
+        if(!tbody) return;
+        let dataIzin = currentUser.role === 'Wali' ? dummyIzin.filter(i => i.kelas === currentUser.kelas) : dummyIzin;
+        let rowsHtml = '';
+        dataIzin.forEach((i, idx) => {
+            rowsHtml += `
+            <tr class="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                <td class="px-4 py-3 text-sm text-slate-600">${idx+1}</td>
+                <td class="px-4 py-3 text-sm font-bold text-slate-800">${i.nama}</td><td class="px-4 py-3 text-sm text-slate-600">${i.kelas}</td>
+                <td class="px-4 py-3 text-sm"><span class="px-2.5 py-1 text-xs font-bold rounded-full ${i.jenis==='Sakit'?'bg-amber-100 text-amber-700':'bg-blue-100 text-blue-700'}">${i.jenis}</span></td>
+                <td class="px-4 py-3 text-sm text-slate-600">${i.dari} s/d ${i.sampai}</td><td class="px-4 py-3 text-sm text-slate-600 font-medium">${i.alasan}</td>
+                <td class="px-4 py-3 text-sm"><span class="px-2.5 py-1 text-xs font-bold rounded-full ${i.status==='Pending'?'bg-slate-200 text-slate-700':(i.status==='Disetujui'?'bg-emerald-100 text-emerald-700':'bg-rose-100 text-rose-700')}">${i.status}</span></td>
+                <td class="px-4 py-3 text-sm whitespace-nowrap">
+                    ${i.status === 'Pending' ? `<button onclick="updateIzin('${i.id}', 'Disetujui')" class="text-emerald-500 hover:bg-emerald-100 p-1.5 rounded mr-1 shadow-sm border border-emerald-200" title="Setujui"><i class="fas fa-check-circle text-lg"></i></button><button onclick="updateIzin('${i.id}', 'Ditolak')" class="text-rose-500 hover:bg-rose-100 p-1.5 rounded mr-1 shadow-sm border border-rose-200" title="Tolak"><i class="fas fa-times-circle text-lg"></i></button>` : `<span class="text-xs text-slate-400 italic">Selesai</span>`}
+                    <button onclick="lihatLampiranIzin('${i.id}')" class="text-blue-500 hover:bg-blue-100 p-1.5 rounded ml-2 shadow-sm border border-blue-200" title="Lihat Surat"><i class="fas fa-paperclip"></i></button>
+                </td>
+            </tr>`;
+        });
+        if(rowsHtml === '') rowsHtml = '<tr><td colspan="8" class="text-center py-10 text-slate-500"><i class="fas fa-inbox text-3xl mb-2 block text-slate-300"></i>Belum ada pengajuan.</td></tr>';
+        tbody.innerHTML = rowsHtml;
+    }
+
+    // --- ALUR ABSENSI 2 TAHAP (QR -> WAJAH) ---
+    function renderSiswaScan() {
+        setTimeout(startQRScanner, 100);
+        return `
+            <div class="max-w-md mx-auto relative">
+                <div class="bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200">
+                    <div class="bg-slate-950 p-5 text-center text-white relative shadow-inner">
+                        <h3 class="text-xl font-bold tracking-wide">Scanner Kehadiran</h3>
+                        <p class="text-xs text-slate-400 mt-1" id="scan-subtitle">Langkah 1: Pindai QR Code Guru</p>
+                        <div id="gps-status" class="absolute top-5 right-5 text-[10px] uppercase font-bold bg-amber-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center"><i class="fas fa-spinner fa-spin mr-1"></i> Menyiapkan</div>
                     </div>
-                    <div class="space-y-3 overflow-y-auto max-h-[500px] pr-2 flex-1 custom-scroll">
-                        ${dummyLokasi.map(l => `
-                            <div class="border border-slate-200 rounded-xl p-4 bg-slate-50 hover:bg-blue-50 transition border-l-4 border-l-blue-500 shadow-sm relative group">
-                                <h4 class="font-bold text-slate-800 text-lg">${l.nama || l.nama_lokasi}</h4>
-                                <div class="mt-2 space-y-1"><p class="text-xs font-mono text-slate-600 bg-white inline-block px-2 py-1 rounded border shadow-sm"><i class="fas fa-map-marker-alt text-rose-500 mr-1"></i> ${l.lat}, ${l.lon}</p><p class="text-xs font-bold text-blue-600 bg-white inline-block px-2 py-1 rounded border shadow-sm"><i class="fas fa-bullseye mr-1"></i> Radius: ${l.radius}m</p></div>
-                                <button onclick="deleteSingle('${l.id}', 'lokasi')" class="absolute top-4 right-4 text-slate-400 hover:text-rose-500 hover:bg-rose-50 p-2 rounded-lg transition" title="Hapus Lokasi"><i class="fas fa-trash-alt"></i></button>
-                            </div>`).join('')}
+                    
+                    <!-- KONTINER KAMERA QR -->
+                    <div id="qr-container" class="relative bg-slate-900 h-80 flex items-center justify-center overflow-hidden">
+                        <video id="webcam-qr" autoplay playsinline class="w-full h-full object-cover hidden"></video>
+                        <div id="qr-placeholder" class="text-slate-400 text-center px-6"><i class="fas fa-camera text-5xl mb-4 text-slate-600 animate-pulse"></i><p class="text-sm font-medium">Membuka Kamera...</p></div>
+                        <div class="absolute inset-0 pointer-events-none flex items-center justify-center">
+                            <div class="w-48 h-48 border-4 border-white/50 rounded-xl relative">
+                                <div class="absolute w-4 h-4 border-t-4 border-l-4 border-emerald-400 top-0 left-0 -mt-1 -ml-1"></div>
+                                <div class="absolute w-4 h-4 border-t-4 border-r-4 border-emerald-400 top-0 right-0 -mt-1 -mr-1"></div>
+                                <div class="absolute w-4 h-4 border-b-4 border-l-4 border-emerald-400 bottom-0 left-0 -mb-1 -ml-1"></div>
+                                <div class="absolute w-4 h-4 border-b-4 border-r-4 border-emerald-400 bottom-0 right-0 -mb-1 -mr-1"></div>
+                                <div class="scan-line hidden" id="qr-scan-line-anim"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- KONTINER KAMERA WAJAH -->
+                    <div id="face-container" class="relative bg-slate-900 h-80 items-center justify-center overflow-hidden hidden flex">
+                        <video id="webcam-face" autoplay playsinline class="w-full h-full object-cover hidden"></video>
+                        <div id="face-placeholder" class="text-slate-400 text-center px-6"><i class="fas fa-user-circle text-5xl mb-4 text-slate-600 animate-pulse"></i><p class="text-sm font-medium">Memuat Face Scan...</p></div>
+                        <div class="absolute inset-0 pointer-events-none hidden" id="face-guide">
+                            <div class="w-52 h-72 border-[3px] border-dashed border-white/60 rounded-full mx-auto mt-4 relative shadow-[0_0_0_9999px_rgba(0,0,0,0.4)]"><div class="scan-line hidden" id="face-scan-line-anim"></div></div>
+                            <div class="absolute bottom-6 left-0 right-0 flex justify-center"><span id="liveness-instruction" class="bg-slate-900/80 backdrop-blur-sm text-white px-5 py-2 rounded-full text-sm font-bold border border-white/20 shadow-lg tracking-wide">Siap Di-scan</span></div>
+                        </div>
+                    </div>
+
+                    <div class="p-6 bg-white grid grid-cols-2 gap-4">
+                        <button onclick="processScan('IN')" id="btn-in" disabled class="opacity-50 cursor-not-allowed bg-emerald-500 text-white py-4 rounded-2xl shadow-md hover:bg-emerald-600 transition flex flex-col items-center justify-center group"><i class="fas fa-sign-in-alt text-2xl mb-1 group-hover:-translate-y-1 transition-transform"></i><span class="font-extrabold tracking-wide">SCAN IN</span></button>
+                        <button onclick="processScan('OUT')" id="btn-out" disabled class="opacity-50 cursor-not-allowed bg-rose-500 text-white py-4 rounded-2xl shadow-md hover:bg-rose-600 transition flex flex-col items-center justify-center group"><i class="fas fa-sign-out-alt text-2xl mb-1 group-hover:translate-x-1 transition-transform"></i><span class="font-extrabold tracking-wide">SCAN OUT</span></button>
                     </div>
                 </div>
             </div>`;
     }
 
-    function initMap() {
-        const mapEl = document.getElementById('map-picker'); if (!mapEl) return;
-        const defaultLat = -8.5361; const defaultLon = 115.4215;
-        if (mapInstance !== null) { mapInstance.off(); mapInstance.remove(); mapInstance = null; }
-
-        mapInstance = L.map('map-picker').setView([defaultLat, defaultLon], 16);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapInstance);
-        document.getElementById('lat').value = defaultLat; document.getElementById('lon').value = defaultLon;
-
-        const icon = L.icon({ iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png', shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png', iconAnchor: [12, 41] });
-        mapMarker = L.marker([defaultLat, defaultLon], {draggable: true, icon: icon}).addTo(mapInstance);
-
-        mapMarker.on('dragend', function (e) { const pos = mapMarker.getLatLng(); document.getElementById('lat').value = pos.lat.toFixed(6); document.getElementById('lon').value = pos.lng.toFixed(6); });
-        mapInstance.on('click', function (e) { mapMarker.setLatLng(e.latlng); document.getElementById('lat').value = e.latlng.lat.toFixed(6); document.getElementById('lon').value = e.latlng.lng.toFixed(6); });
-        setTimeout(() => { mapInstance.invalidateSize(); }, 400);
+    function startQRScanner() {
+        const video = document.getElementById('webcam-qr'); if(!video) return;
+        const placeholder = document.getElementById('qr-placeholder');
+        const status = document.getElementById('gps-status'); 
+        
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
+            .then((s) => {
+                streamQR = s; 
+                video.srcObject = streamQR; 
+                video.classList.remove('hidden'); 
+                placeholder.classList.add('hidden'); 
+                document.getElementById('qr-scan-line-anim').classList.remove('hidden');
+                
+                status.innerHTML = '<i class="fas fa-qrcode mr-1"></i> Scan QR';
+                status.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-indigo-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
+                
+                qrScannerLoop = requestAnimationFrame(tickQR);
+            }).catch((err) => { 
+                placeholder.innerHTML = `<i class="fas fa-video-slash text-5xl mb-4 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Kamera Ditolak/Error.</p>`; 
+            });
     }
 
-    function getGPSCurrent(btn) {
-        const originalContent = btn.innerHTML; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Mencari...';
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    const lat = pos.coords.latitude; const lon = pos.coords.longitude;
-                    document.getElementById('lat').value = lat.toFixed(6); document.getElementById('lon').value = lon.toFixed(6);
-                    if (mapInstance && mapMarker) { const newLatLng = new L.LatLng(lat, lon); mapMarker.setLatLng(newLatLng); mapInstance.setView(newLatLng, 18); }
-                    btn.innerHTML = '<i class="fas fa-check text-emerald-600 mr-2"></i>Ditemukan'; setTimeout(() => { btn.innerHTML = originalContent; }, 3000);
-                },
-                (err) => { Swal.fire('Error', 'Izin lokasi ditolak/tidak aktif.', 'error'); btn.innerHTML = originalContent; },
-                { enableHighAccuracy: true, timeout: 10000 }
-            );
-        } else { Swal.fire('Error', 'GPS tidak didukung', 'error'); btn.innerHTML = originalContent; }
+    let qrCanvas = document.createElement('canvas');
+    function tickQR() {
+        if(isQrVerified || currentActiveView !== 'siswa-scan') return;
+        const video = document.getElementById('webcam-qr');
+        
+        if(video && video.readyState === video.HAVE_ENOUGH_DATA) {
+            qrCanvas.height = video.videoHeight;
+            qrCanvas.width = video.videoWidth;
+            const qrContext = qrCanvas.getContext('2d', { willReadFrequently: true });
+            qrContext.drawImage(video, 0, 0, qrCanvas.width, qrCanvas.height);
+            let imageData = qrContext.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
+            
+            // Core Logic Deteksi QR via Library
+            let code = jsQR(imageData.data, imageData.width, imageData.height, {inversionAttempts: "dontInvert"});
+            
+            if(code) {
+                const d = new Date();
+                const todayStr = String(d.getDate()).padStart(2, '0') + String(d.getMonth()+1).padStart(2, '0') + d.getFullYear();
+                
+                // Mencegah QR Code kemarin di-scan hari ini
+                if(code.data === "SAWAH_QR_" + todayStr) {
+                    isQrVerified = true;
+                    document.getElementById('gps-status').innerHTML = '<i class="fas fa-check-circle mr-1"></i> QR Valid';
+                    document.getElementById('gps-status').className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-emerald-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
+                    
+                    Swal.fire({icon: 'success', title: 'Akses Diberikan!', text: 'Membuka kamera depan untuk deteksi wajah...', timer: 1500, showConfirmButton: false});
+                    stopMediaTracks(streamQR); // Matikan kamera belakang
+                    
+                    setTimeout(() => {
+                        document.getElementById('qr-container').classList.add('hidden');
+                        document.getElementById('face-container').classList.remove('hidden');
+                        document.getElementById('scan-subtitle').innerText = "Langkah 2: Verifikasi Wajah";
+                        startFaceScanner(); // Buka kamera depan
+                    }, 500);
+                    return; 
+                } else {
+                    document.getElementById('gps-status').innerHTML = '<i class="fas fa-times-circle mr-1"></i> QR Ditolak';
+                    document.getElementById('gps-status').className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-rose-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
+                }
+            }
+        }
+        qrScannerLoop = requestAnimationFrame(tickQR); // Looping per frame
+    }
+
+    function startFaceScanner() {
+        const video = document.getElementById('webcam-face');
+        const placeholder = document.getElementById('face-placeholder');
+        const guide = document.getElementById('face-guide');
+        const btnIn = document.getElementById('btn-in');
+        const btnOut = document.getElementById('btn-out');
+        const status = document.getElementById('gps-status');
+
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
+            .then((s) => {
+                streamFace = s; 
+                video.srcObject = streamFace; 
+                video.classList.remove('hidden'); 
+                placeholder.classList.add('hidden'); 
+                guide.classList.remove('hidden');
+                
+                status.innerHTML = '<i class="fas fa-camera mr-1"></i> Kamera Siap';
+                status.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-blue-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
+                
+                btnIn.disabled = false; btnIn.classList.remove('opacity-50', 'cursor-not-allowed'); 
+                btnOut.disabled = false; btnOut.classList.remove('opacity-50', 'cursor-not-allowed');
+            }).catch((err) => { 
+                placeholder.innerHTML = `<i class="fas fa-video-slash text-5xl mb-4 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Akses Kamera Depan Ditolak.</p>`; 
+            });
+    }
+
+    function processScan(type) {
+        const video = document.getElementById('webcam-face'); 
+        const instruction = document.getElementById('liveness-instruction'); 
+        const scanLine = document.getElementById('face-scan-line-anim');
+        const challenges = ["Silakan Tersenyum", "Toleh Ke Kiri Sedikit", "Kedipkan Mata Anda"];
+        const randomChallenge = challenges[Math.floor(Math.random() * challenges.length)];
+        
+        scanLine.classList.remove('hidden'); instruction.innerHTML = `<span class="text-amber-300 animate-pulse">${randomChallenge}</span>`;
+        document.getElementById('btn-in').disabled = true; document.getElementById('btn-out').disabled = true;
+
+        setTimeout(() => {
+            instruction.innerHTML = `<span class="text-emerald-400"><i class="fas fa-check-circle"></i> Wajah Terverifikasi Asli</span>`;
+            const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 240; 
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+            saveAttendance(type, canvas.toDataURL('image/jpeg', 0.5));
+        }, 2000);
+    }
+
+    function saveAttendance(type, base64Image) {
+        document.getElementById('face-scan-line-anim').classList.add('hidden'); 
+        document.getElementById('liveness-instruction').innerText = "Kamera Siap.";
+        document.getElementById('btn-in').disabled = false; document.getElementById('btn-out').disabled = false;
+
+        fetch(GAS_URL, {
+            method: 'POST', body: JSON.stringify({ action: 'scan', type: type, id_user: currentUser.id, image: base64Image, lat: "QR_VERIFIED", lon: "QR_VERIFIED" })
+        }).then(res => res.json()).then(res => { 
+            if(res.success) {
+                if(type === 'IN') { dummyAbsensi.unshift(res.data); } 
+                else if(type === 'OUT') { 
+                    let exist = dummyAbsensi.find(a => a.id_user === currentUser.id && a.waktu_out === '-'); 
+                    if(exist) exist.waktu_out = res.data.waktu_out;
+                }
+                Swal.fire({ icon: 'success', title: `Scan ${type} Berhasil!`, html: `<p class="text-slate-600 font-medium">Tercatat di Server</p><img src="${base64Image}" class="mt-4 rounded-xl mx-auto w-48 border-4 border-emerald-100 shadow-md">`, confirmButtonColor: '#10b981' });
+            } else Swal.fire('Ditolak', res.message, 'error'); 
+        });
     }
 
     function renderAdminWaktu() {
@@ -1027,282 +1208,6 @@
                     <button type="submit" class="bg-slate-800 text-white px-4 py-3.5 rounded-xl w-full hover:bg-slate-900 shadow-md font-bold text-lg transition"><i class="fas fa-save mr-2"></i> TERAPKAN JADWAL</button>
                 </form>
             </div>`;
-    }
-
-    function renderAdminIzin() {
-        let dataIzin = dummyIzin;
-        if (currentUser.role === 'Wali') dataIzin = dummyIzin.filter(i => i.kelas === currentUser.kelas);
-
-        let rows = dataIzin.map((i, idx) => `
-            <tr class="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                <td class="px-4 py-3 text-sm text-slate-600">${idx+1}</td>
-                <td class="px-4 py-3 text-sm font-bold text-slate-800">${i.nama}</td><td class="px-4 py-3 text-sm text-slate-600">${i.kelas}</td>
-                <td class="px-4 py-3 text-sm"><span class="px-2.5 py-1 text-xs font-bold rounded-full ${i.jenis==='Sakit'?'bg-amber-100 text-amber-700':'bg-blue-100 text-blue-700'}">${i.jenis}</span></td>
-                <td class="px-4 py-3 text-sm text-slate-600">${i.dari} s/d ${i.sampai}</td><td class="px-4 py-3 text-sm text-slate-600 font-medium">${i.alasan}</td>
-                <td class="px-4 py-3 text-sm"><span class="px-2.5 py-1 text-xs font-bold rounded-full ${i.status==='Pending'?'bg-slate-200 text-slate-700':(i.status==='Disetujui'?'bg-emerald-100 text-emerald-700':'bg-rose-100 text-rose-700')}">${i.status}</span></td>
-                <td class="px-4 py-3 text-sm whitespace-nowrap">
-                    ${i.status === 'Pending' ? `<button onclick="updateIzin('${i.id}', 'Disetujui')" class="text-emerald-500 hover:bg-emerald-100 p-1.5 rounded mr-1"><i class="fas fa-check-circle text-lg"></i></button><button onclick="updateIzin('${i.id}', 'Ditolak')" class="text-rose-500 hover:bg-rose-100 p-1.5 rounded mr-1"><i class="fas fa-times-circle text-lg"></i></button>` : `<span class="text-xs text-slate-400 italic">Selesai</span>`}
-                    <button onclick="mockAction('Membuka Lampiran')" class="text-blue-500 hover:bg-blue-100 p-1.5 rounded ml-2"><i class="fas fa-paperclip"></i></button>
-                </td>
-            </tr>`).join('');
-
-        return `
-            <div class="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-                    <h3 class="text-lg font-bold text-slate-800">Validasi Keterangan Siswa</h3><button onclick="deleteAllData('izin')" class="bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm"><i class="fas fa-trash-alt mr-1"></i> Kosongkan</button>
-                </div>
-                <div class="overflow-x-auto border border-slate-200 rounded-xl max-h-[500px] overflow-y-auto custom-scroll">
-                    <table class="w-full text-left border-collapse relative">
-                        <thead class="bg-slate-50 border-b border-slate-200 sticky top-0 z-10 shadow-sm"><tr><th class="px-4 py-3 text-sm font-bold text-slate-600">No</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Nama Siswa</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Kelas</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Kategori</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Tanggal</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Alasan</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Status</th><th class="px-4 py-3 text-sm font-bold text-slate-600">Aksi</th></tr></thead>
-                        <tbody>${dataIzin.length > 0 ? rows : '<tr><td colspan="8" class="text-center py-10 text-slate-500"><i class="fas fa-inbox text-3xl mb-2 block text-slate-300"></i>Belum ada pengajuan.</td></tr>'}</tbody>
-                    </table>
-                </div>
-            </div>`;
-    }
-
-    function renderSiswaScan() {
-        setTimeout(startCameraAndGPS, 100);
-        return `
-            <div class="max-w-md mx-auto relative">
-                <div class="bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200">
-                    <div class="bg-slate-950 p-5 text-center text-white relative shadow-inner">
-                        <h3 class="text-xl font-bold tracking-wide">Scanner Kehadiran</h3><p class="text-xs text-slate-400 mt-1">Posisikan wajah di dalam garis.</p>
-                        <div id="gps-status" class="absolute top-5 right-5 text-[10px] uppercase font-bold bg-amber-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center"><i class="fas fa-satellite-dish animate-pulse mr-1"></i> Mencari GPS</div>
-                    </div>
-                    <div class="relative bg-slate-900 h-80 flex items-center justify-center overflow-hidden">
-                        <video id="webcam" autoplay playsinline class="w-full h-full object-cover hidden"></video>
-                        <div id="camera-placeholder" class="text-slate-400 text-center px-6"><i class="fas fa-compass text-5xl mb-4 text-slate-600 animate-spin-slow"></i><p id="camera-msg" class="text-sm font-medium">Memverifikasi lokasi GPS...</p></div>
-                        <div id="guide-frame" class="absolute inset-0 pointer-events-none hidden">
-                            <div class="w-52 h-72 border-[3px] border-dashed border-white/60 rounded-full mx-auto mt-4 relative shadow-[0_0_0_9999px_rgba(0,0,0,0.4)]"><div class="scan-line hidden" id="scan-line-anim"></div></div>
-                            <div class="absolute bottom-6 left-0 right-0 flex justify-center"><span id="liveness-instruction" class="bg-slate-900/80 backdrop-blur-sm text-white px-5 py-2 rounded-full text-sm font-bold border border-white/20 shadow-lg tracking-wide">Siap Di-scan</span></div>
-                        </div>
-                    </div>
-                    <div class="p-6 bg-white grid grid-cols-2 gap-4">
-                        <button onclick="processScan('IN')" id="btn-in" disabled class="opacity-50 cursor-not-allowed bg-emerald-500 text-white py-4 rounded-2xl shadow-md hover:bg-emerald-600 transition flex flex-col items-center justify-center group"><i class="fas fa-sign-in-alt text-2xl mb-1 group-hover:-translate-y-1 transition-transform"></i><span class="font-extrabold tracking-wide">SCAN IN</span></button>
-                        <button onclick="processScan('OUT')" id="btn-out" disabled class="opacity-50 cursor-not-allowed bg-rose-500 text-white py-4 rounded-2xl shadow-md hover:bg-rose-600 transition flex flex-col items-center justify-center group"><i class="fas fa-sign-out-alt text-2xl mb-1 group-hover:translate-x-1 transition-transform"></i><span class="font-extrabold tracking-wide">SCAN OUT</span></button>
-                    </div>
-                </div>
-            </div>`;
-    }
-
-    // FIX: Optimasi Toleransi Radius Minimal 200m & Bypass Keamanan
-    function startCameraAndGPS() {
-        const video = document.getElementById('webcam'); if(!video) return; 
-        const placeholder = document.getElementById('camera-placeholder'); const guide = document.getElementById('guide-frame');
-        const btnIn = document.getElementById('btn-in'); const btnOut = document.getElementById('btn-out'); const gpsStatus = document.getElementById('gps-status');
-
-        placeholder.innerHTML = `<i class="fas fa-compass text-5xl mb-4 text-slate-600 animate-spin-slow"></i><p class="text-sm font-medium">Memverifikasi lokasi GPS...</p>`;
-        gpsStatus.innerHTML = '<i class="fas fa-satellite-dish animate-pulse mr-1"></i> Mencari GPS';
-        gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-amber-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
-
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                let withinZone = false;
-                let minDistance = Infinity;
-                let accuracy = pos.coords.accuracy || 0; 
-                let userLat = pos.coords.latitude;
-                let userLon = pos.coords.longitude;
-
-                if (dummyLokasi.length === 0) {
-                    withinZone = true;
-                } else {
-                    for (let i = 0; i < dummyLokasi.length; i++) {
-                        let locLat = parseFloat(String(dummyLokasi[i].lat).replace(',', '.'));
-                        let locLon = parseFloat(String(dummyLokasi[i].lon).replace(',', '.'));
-                        let locRad = parseFloat(String(dummyLokasi[i].radius));
-                        if(isNaN(locRad)) locRad = 50;
-
-                        let dist = calculateDistance(userLat, userLon, locLat, locLon);
-                        if (dist < minDistance) minDistance = dist;
-                        
-                        // FIX PERMANEN: Memberikan buffer error HP + batas aman terkecil = 200 meter
-                        let allowedRadius = locRad + accuracy + 50;
-                        if(allowedRadius < 200) allowedRadius = 200;
-
-                        if (dist <= allowedRadius) {
-                            withinZone = true;
-                            break; 
-                        }
-                    }
-                }
-                
-                let tmpLat = document.getElementById('scan-lat');
-                if (!tmpLat) { tmpLat = document.createElement('input'); tmpLat.type = 'hidden'; tmpLat.id = 'scan-lat'; document.body.appendChild(tmpLat); }
-                tmpLat.value = userLat;
-
-                let tmpLon = document.getElementById('scan-lon');
-                if (!tmpLon) { tmpLon = document.createElement('input'); tmpLon.type = 'hidden'; tmpLon.id = 'scan-lon'; document.body.appendChild(tmpLon); }
-                tmpLon.value = userLon;
-
-                if (withinZone) {
-                    gpsStatus.innerHTML = '<i class="fas fa-check-circle mr-1"></i> GPS Valid'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-emerald-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
-                    placeholder.innerHTML = `<i class="fas fa-camera text-5xl mb-4 text-slate-600"></i><p class="text-sm font-medium">Membuka Kamera...</p>`;
-                    initCamera(video, placeholder, guide, btnIn, btnOut);
-                } else {
-                    gpsStatus.innerHTML = '<i class="fas fa-times-circle mr-1"></i> Luar Zona'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-rose-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
-                    
-                    placeholder.innerHTML = `<i class="fas fa-map-marked-alt text-5xl mb-2 text-rose-500"></i>
-                        <p class="text-sm font-bold text-rose-500">Luar Area Sekolah.</p>
-                        <div class="mt-2 bg-slate-800 p-2 rounded text-left inline-block shadow-inner w-full max-w-[200px]">
-                            <p class="text-[10px] text-slate-300 font-mono truncate">HP: ${userLat.toFixed(5)}, ${userLon.toFixed(5)}</p>
-                            <p class="text-[10px] text-slate-300 font-mono">Jarak Aktual: <span class="text-rose-400 font-bold">${minDistance !== Infinity ? Math.round(minDistance) : 0}m</span></p>
-                            <p class="text-[10px] text-slate-300 font-mono">Akurasi HP: <span class="text-amber-400 font-bold">&plusmn; ${Math.round(accuracy)}m</span></p>
-                        </div>
-                        <div class="flex flex-col gap-2 mt-3 w-full max-w-[200px] mx-auto">
-                            <button onclick="startCameraAndGPS()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs px-4 py-2 rounded-lg font-bold transition"><i class="fas fa-sync-alt mr-1"></i> Coba Lagi GPS</button>
-                            <button onclick="showTokenBypass()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-2 rounded-lg font-bold shadow-md transition"><i class="fas fa-shield-alt mr-1"></i> Otorisasi Guru</button>
-                        </div>`;
-                }
-            },
-            (err) => {
-                gpsStatus.innerHTML = '<i class="fas fa-exclamation-triangle mr-1"></i> GPS Mati'; gpsStatus.className = 'absolute top-5 right-5 text-[10px] uppercase font-bold bg-rose-500 text-white px-2.5 py-1 rounded-full shadow-md flex items-center';
-                placeholder.innerHTML = `<i class="fas fa-location-arrow text-4xl mb-3 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Izin Lokasi Ditolak/Mati.</p><p class="text-xs text-slate-500 mt-1 mb-3">Aktifkan GPS HP Anda.</p>
-                <div class="flex flex-col gap-2 mt-3 w-full max-w-[200px] mx-auto">
-                    <button onclick="startCameraAndGPS()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs px-4 py-2 rounded-lg font-bold transition"><i class="fas fa-sync-alt mr-1"></i> Coba Lagi GPS</button>
-                    <button onclick="showTokenBypass()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-2 rounded-lg font-bold shadow-md transition"><i class="fas fa-shield-alt mr-1"></i> Otorisasi Guru</button>
-                </div>`;
-            }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-        );
-    }
-
-    function initCamera(video, placeholder, guide, btnIn, btnOut) {
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
-            .then((s) => {
-                stream = s; video.srcObject = stream; video.classList.remove('hidden'); placeholder.classList.add('hidden'); guide.classList.remove('hidden');
-                btnIn.disabled = false; btnIn.classList.remove('opacity-50', 'cursor-not-allowed'); btnOut.disabled = false; btnOut.classList.remove('opacity-50', 'cursor-not-allowed');
-                document.getElementById('liveness-instruction').innerText = "Kamera Siap, Silakan Tekan Tombol.";
-            }).catch((err) => { placeholder.innerHTML = `<i class="fas fa-video-slash text-5xl mb-4 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Akses Kamera Ditolak.</p>`; });
-    }
-
-    function calculateDistance(lat1, lon1, lat2, lon2) {
-        const R = 6371e3; const p1 = lat1 * Math.PI/180; const p2 = lat2 * Math.PI/180; const dp = (lat2-lat1) * Math.PI/180; const dl = (lon2-lon1) * Math.PI/180;
-        const a = Math.sin(dp/2) * Math.sin(dp/2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) * Math.sin(dl/2);
-        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    }
-
-    function processScan(type) {
-        const video = document.getElementById('webcam'); const instruction = document.getElementById('liveness-instruction'); const scanLine = document.getElementById('scan-line-anim');
-        const challenges = ["Silakan Tersenyum", "Toleh Ke Kiri Sedikit", "Kedipkan Mata Anda"];
-        const randomChallenge = challenges[Math.floor(Math.random() * challenges.length)];
-        
-        scanLine.classList.remove('hidden'); instruction.innerHTML = `<span class="text-amber-300 animate-pulse">${randomChallenge}</span>`;
-        document.getElementById('btn-in').disabled = true; document.getElementById('btn-out').disabled = true;
-
-        setTimeout(() => {
-            instruction.innerHTML = `<span class="text-emerald-400"><i class="fas fa-check-circle"></i> Wajah Terverifikasi Asli</span>`;
-            const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 240; 
-            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-            saveAttendance(type, canvas.toDataURL('image/jpeg', 0.5));
-        }, 2000);
-    }
-
-    function saveAttendance(type, base64Image) {
-        document.getElementById('scan-line-anim').classList.add('hidden'); document.getElementById('liveness-instruction').innerText = "Kamera Siap.";
-        document.getElementById('btn-in').disabled = false; document.getElementById('btn-out').disabled = false;
-
-        let posLat = document.getElementById('scan-lat') ? document.getElementById('scan-lat').value : "0";
-        let posLon = document.getElementById('scan-lon') ? document.getElementById('scan-lon').value : "0";
-
-        fetch(GAS_URL, {
-            method: 'POST', body: JSON.stringify({ action: 'scan', type: type, id_user: currentUser.id, image: base64Image, lat: posLat, lon: posLon })
-        }).then(res => res.json()).then(res => { 
-            if(res.success) {
-                if(type === 'IN') { dummyAbsensi.unshift(res.data); } 
-                else if(type === 'OUT') { 
-                    let exist = dummyAbsensi.find(a => a.id_user === currentUser.id && a.waktu_out === '-'); 
-                    if(exist) exist.waktu_out = res.data.waktu_out;
-                }
-                Swal.fire({ icon: 'success', title: `Scan ${type} Berhasil!`, html: `<p class="text-slate-600 font-medium">Tercatat di Server</p><img src="${base64Image}" class="mt-4 rounded-xl mx-auto w-48 border-4 border-emerald-100 shadow-md">`, confirmButtonColor: '#10b981' });
-            } else Swal.fire('Ditolak', res.message, 'error'); 
-        });
-    }
-
-    function renderSiswaIzin() {
-        return `
-            <div class="max-w-xl mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
-                <h3 class="text-xl font-bold text-slate-800 mb-6 flex items-center"><i class="fas fa-file-medical text-blue-500 mr-2"></i> Lapor Ketidakhadiran</h3>
-                <form onsubmit="event.preventDefault(); Swal.fire('Terkirim!', 'Pengajuan diteruskan ke Wali Kelas', 'success');" class="space-y-5">
-                    <div><label class="block text-sm font-bold text-slate-700 mb-1">Kategori</label><select class="w-full border border-slate-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none"><option>Sakit (Perlu Surat)</option><option>Izin Kepentingan</option></select></div>
-                    <div class="grid grid-cols-2 gap-4"><div><label class="block text-sm font-bold text-slate-700 mb-1">Dari</label><input type="date" required class="w-full border border-slate-300 rounded-xl p-3 outline-none"></div><div><label class="block text-sm font-bold text-slate-700 mb-1">Sampai</label><input type="date" required class="w-full border border-slate-300 rounded-xl p-3 outline-none"></div></div>
-                    <div><label class="block text-sm font-bold text-slate-700 mb-1">Alasan</label><textarea required rows="3" class="w-full border border-slate-300 rounded-xl p-3 outline-none" placeholder="Jelaskan singkat..."></textarea></div>
-                    <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 border-dashed"><label class="block text-sm font-bold text-slate-700 mb-2">Upload Lampiran</label><input type="file" accept="image/*,application/pdf" required class="w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:bg-blue-100 file:text-blue-700 cursor-pointer"></div>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-md hover:bg-blue-700 transition active:scale-95"><i class="fas fa-paper-plane mr-2"></i> Kirim</button>
-                </form>
-            </div>`;
-    }
-
-    function renderSiswaWajah() {
-        if (currentUser.foto && currentUser.foto.trim() !== '') {
-            return `
-            <div class="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-100 text-center">
-                <div class="relative w-32 h-32 mx-auto mb-5">
-                    <div class="w-full h-full rounded-full overflow-hidden border-4 border-emerald-100 shadow-lg bg-slate-100">
-                        <img src="${currentUser.foto}" class="w-full h-full object-cover" alt="Foto Wajah">
-                    </div>
-                    <div class="absolute bottom-1 right-1 bg-emerald-500 text-white w-8 h-8 rounded-full flex items-center justify-center border-2 border-white shadow-sm"><i class="fas fa-check text-sm"></i></div>
-                </div>
-                <h3 class="text-2xl font-bold text-slate-800 mb-2">Wajah Terekam</h3>
-                <p class="text-slate-500 text-sm mb-8 leading-relaxed">Pola data geometrik wajah Anda telah tersimpan dan terenkripsi di server pusat.</p>
-                <button onclick="changeView('siswa-scan')" class="bg-blue-600 hover:bg-blue-700 text-white py-3 w-full rounded-xl font-bold shadow-md transition active:scale-95">Lanjut ke Scanner Kehadiran</button>
-            </div>`;
-        } else {
-            return `
-            <div class="max-w-md mx-auto bg-white p-6 rounded-2xl shadow-sm border border-slate-100 text-center">
-                <h3 class="text-xl font-bold text-slate-800 mb-2">Registrasi Wajah Baru</h3>
-                <p class="text-slate-500 text-xs mb-4">Harap rekam wajah Anda sebagai referensi database absensi (Wajib dilakukan pertama kali).</p>
-                <div class="relative bg-slate-900 h-64 rounded-xl overflow-hidden mb-4 flex items-center justify-center">
-                    <video id="webcam-reg" autoplay playsinline class="w-full h-full object-cover hidden"></video>
-                    <div id="reg-placeholder" class="text-slate-400"><i class="fas fa-camera text-4xl mb-2"></i><p class="text-sm">Membuka kamera...</p></div>
-                </div>
-                <button onclick="simpanWajahBaru()" id="btn-reg-wajah" disabled class="bg-blue-600 text-white py-3.5 w-full rounded-xl font-bold opacity-50 cursor-not-allowed shadow-md flex justify-center items-center"><i class="fas fa-save mr-2"></i> REKAM & SIMPAN WAJAH</button>
-            </div>`;
-        }
-    }
-
-    window.initKameraRegistrasi = function() {
-        const video = document.getElementById('webcam-reg');
-        const placeholder = document.getElementById('reg-placeholder');
-        const btn = document.getElementById('btn-reg-wajah');
-        if(!video) return;
-        
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
-        .then((s) => {
-            stream = s; video.srcObject = stream; video.classList.remove('hidden'); placeholder.classList.add('hidden');
-            btn.disabled = false; btn.classList.remove('opacity-50', 'cursor-not-allowed'); btn.classList.add('hover:bg-blue-700', 'active:scale-95', 'transition');
-        }).catch((err) => { 
-            placeholder.innerHTML = `<i class="fas fa-video-slash text-4xl mb-2 text-rose-500"></i><p class="text-sm font-bold text-rose-500">Kamera Ditolak.</p>`; 
-        });
-    }
-
-    window.simpanWajahBaru = function() {
-        const video = document.getElementById('webcam-reg');
-        const btn = document.getElementById('btn-reg-wajah');
-        if(!video) return;
-
-        const originalBtn = btn.innerHTML;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Menyimpan ke Server...';
-        btn.disabled = true;
-
-        const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 240; 
-        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-        const fotoBase64 = canvas.toDataURL('image/jpeg', 0.8);
-
-        fetch(GAS_URL, {
-            method: 'POST', body: JSON.stringify({ action: 'updateUser', data: { id: currentUser.id, foto: fotoBase64 } })
-        }).then(r => r.json()).then(res => {
-            if(res.success) {
-                currentUser.foto = fotoBase64;
-                Swal.fire({ icon: 'success', title: 'Berhasil!', text: 'Wajah Anda berhasil tersimpan di sistem.' }).then(() => {
-                    changeView('siswa-scan'); 
-                });
-            } else {
-                Swal.fire('Gagal', res.message, 'error');
-                btn.innerHTML = originalBtn; btn.disabled = false;
-            }
-        }).catch(err => {
-            Swal.fire('Error', 'Gagal menghubungi server.', 'error');
-            btn.innerHTML = originalBtn; btn.disabled = false;
-        });
     }
 
     function renderSiswaRiwayat() {
